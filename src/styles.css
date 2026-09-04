@@ -1,0 +1,240 @@
+/* ==========================================================================
+   AI Chat to PDF - In-Chat Selection & Floating Toolbar Styles
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   In-Chat Checkbox on Message Turns
+   -------------------------------------------------------------------------- */
+.chat-pdf-select-container {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  opacity: 0.25;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* Make checkbox visible on hover or when already selected */
+[data-message-author-role]:hover .chat-pdf-select-container,
+article:hover .chat-pdf-select-container,
+div[data-testid^="conversation-turn"]:hover .chat-pdf-select-container,
+user-query:hover .chat-pdf-select-container,
+model-response:hover .chat-pdf-select-container,
+[data-test-render-count]:hover .chat-pdf-select-container,
+.font-claude-message:hover .chat-pdf-select-container,
+.chat-pdf-selected .chat-pdf-select-container,
+.chat-pdf-select-container:focus-within {
+  opacity: 1;
+}
+
+.chat-pdf-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 4px;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  transition: all 0.2s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chat-pdf-checkbox-label {
+    background: rgba(30, 41, 59, 0.95);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  }
+}
+
+.chat-pdf-checkbox {
+  position: absolute;
+  opacity: 0;
+  cursor: pointer;
+  height: 0;
+  width: 0;
+}
+
+.chat-pdf-custom-check {
+  width: 18px;
+  height: 18px;
+  background-color: transparent;
+  border: 2px solid #94a3b8;
+  border-radius: 4px;
+  display: inline-block;
+  position: relative;
+  transition: all 0.15s ease;
+}
+
+.chat-pdf-checkbox-label:hover .chat-pdf-custom-check {
+  border-color: #10a37f;
+}
+
+.chat-pdf-checkbox:checked ~ .chat-pdf-custom-check {
+  background-color: #10a37f;
+  border-color: #10a37f;
+}
+
+.chat-pdf-checkbox:checked ~ .chat-pdf-custom-check::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 4px;
+  height: 9px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Highlight style when message is selected */
+.chat-pdf-selected {
+  outline: 2px solid #10a37f !important;
+  outline-offset: -2px;
+  border-radius: 8px;
+  transition: outline 0.2s ease;
+}
+
+/* --------------------------------------------------------------------------
+   Floating Control Bar
+   -------------------------------------------------------------------------- */
+#chat-pdf-floating-bar {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 999999;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.25), 0 8px 10px -6px rgba(0, 0, 0, 0.15);
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: #1e293b;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  #chat-pdf-floating-bar {
+    background: #1e293b;
+    border-color: #334155;
+    color: #f8fafc;
+  }
+}
+
+.chat-pdf-bar-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding-right: 6px;
+  border-right: 1px solid #e2e8f0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chat-pdf-bar-title {
+    border-color: #475569;
+  }
+}
+
+.chat-pdf-badge {
+  background: #eff6ff;
+  color: #2563eb;
+  padding: 2px 7px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chat-pdf-badge {
+    background: #1e3a8a;
+    color: #bfdbfe;
+  }
+}
+
+.chat-pdf-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-pdf-btn {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.chat-pdf-btn:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chat-pdf-btn {
+    background: #334155;
+    border-color: #475569;
+    color: #e2e8f0;
+  }
+  .chat-pdf-btn:hover {
+    background: #475569;
+    border-color: #64748b;
+  }
+}
+
+.chat-pdf-btn-primary {
+  background: #10a37f !important;
+  color: #ffffff !important;
+  border-color: #0d8a6a !important;
+  font-weight: 600;
+  box-shadow: 0 2px 4px rgba(16, 163, 127, 0.2);
+}
+
+.chat-pdf-btn-primary:hover {
+  background: #0d8a6a !important;
+}
+
+.chat-pdf-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chat-pdf-bar-collapse {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #94a3b8;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-pdf-bar-collapse:hover {
+  color: #475569;
+}
+
+#chat-pdf-floating-bar.chat-pdf-minimized .chat-pdf-bar-content {
+  display: none;
+}
+
+#chat-pdf-floating-bar.chat-pdf-minimized {
+  padding: 6px 10px;
+  cursor: pointer;
+}

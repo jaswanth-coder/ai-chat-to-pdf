@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AI Chat to PDF</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="header">
+    <div class="header-brand">
+      <span class="logo-icon">📄</span>
+      <h1 class="logo-text">AI Chat to PDF</h1>
+    </div>
+    <span id="status-badge" class="badge badge-inactive">Checking...</span>
+  </header>
+
+  <main class="content">
+    <div id="active-panel" class="panel">
+      <div class="stats-card">
+        <div class="stat-item">
+          <span class="stat-label">Platform</span>
+          <span class="stat-value" id="platform-name">-</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Messages</span>
+          <span class="stat-value" id="msg-stats">0 / 0</span>
+        </div>
+      </div>
+
+      <div class="action-buttons">
+        <button id="btn-select-all" class="btn btn-secondary">Select All</button>
+        <button id="btn-clear" class="btn btn-secondary">Clear</button>
+      </div>
+
+      <button id="btn-export-pdf" class="btn btn-primary btn-block">
+        <span>📥</span> Download PDF
+      </button>
+
+      <div class="section-divider"></div>
+
+      <div class="settings-section">
+        <h2 class="section-title">PDF Options</h2>
+
+        <div class="setting-row">
+          <label for="setting-header">Include Title & Date Header</label>
+          <input type="checkbox" id="setting-header" checked>
+        </div>
+
+        <div class="setting-row">
+          <label for="setting-timestamps">Include Timestamps</label>
+          <input type="checkbox" id="setting-timestamps" checked>
+        </div>
+
+        <div class="setting-row">
+          <label for="setting-font-size">Font Size</label>
+          <select id="setting-font-size">
+            <option value="small">Small</option>
+            <option value="medium" selected>Medium</option>
+            <option value="large">Large</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="inactive-panel" class="panel hidden">
+      <div class="empty-state">
+        <div class="empty-icon">💬</div>
+        <h3>No Supported Chat Active</h3>
+        <p>Open a conversation on any of these supported platforms:</p>
+        <ul class="supported-list">
+          <li><strong>ChatGPT:</strong> <a href="https://chatgpt.com" target="_blank">chatgpt.com</a></li>
+          <li><strong>Claude:</strong> <a href="https://claude.ai" target="_blank">claude.ai</a></li>
+          <li><strong>Gemini:</strong> <a href="https://gemini.google.com" target="_blank">gemini.google.com</a></li>
+        </ul>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <span>Tip: You can also select messages right in the chat UI!</span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

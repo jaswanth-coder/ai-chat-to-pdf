@@ -1,0 +1,66 @@
+/**
+ * Google Gemini Adapter for gemini.google.com
+ */
+class GeminiAdapter extends BaseAdapter {
+  constructor() {
+    super('Gemini');
+  }
+
+  isMatching() {
+    return window.location.hostname === 'gemini.google.com';
+  }
+
+  getChatTitle() {
+    const titleEl = document.querySelector('conversations-list-item[selected] .title, [data-test-id="chat-title"], header h1');
+    if (titleEl && titleEl.textContent.trim()) {
+      return titleEl.textContent.trim();
+    }
+    let title = document.title || 'Gemini Conversation';
+    title = title.replace(/\s*-\s*Google\s*Gemini$/i, '').replace(/\s*-\s*Gemini$/i, '').trim();
+    return title || 'Gemini Conversation';
+  }
+
+  getMessageElements() {
+    // Gemini uses custom web components <user-query> and <model-response>
+    let turns = Array.from(document.querySelectorAll('user-query, model-response'));
+    if (turns.length === 0) {
+      turns = Array.from(document.querySelectorAll('.query-container, .response-container, .conversation-container'));
+    }
+    if (turns.length === 0) {
+      turns = Array.from(document.querySelectorAll('message-content, .message-content'));
+    }
+    return turns;
+  }
+
+  extractMessageData(element) {
+    let id = element.dataset.chatPdfId;
+    if (!id) {
+      id = window.ChatPdfUtils.generateId('gemini');
+      element.dataset.chatPdfId = id;
+    }
+
+    const tagName = element.tagName.toLowerCase();
+    const isUser = tagName === 'user-query' ||
+                   element.classList.contains('query-container') ||
+                   element.querySelector('.user-query') !== null;
+
+    const role = isUser ? 'user' : 'assistant';
+    const authorName = isUser ? 'You' : 'Gemini';
+
+    const contentElement = element.querySelector('.query-text') ||
+                           element.querySelector('.model-response-text') ||
+                           element.querySelector('.markdown') ||
+                           element.querySelector('message-content') ||
+                           element;
+
+    return {
+      id,
+      role,
+      authorName,
+      contentElement,
+      timestamp: window.ChatPdfUtils.formatDate()
+    };
+  }
+}
+
+window.GeminiAdapter = GeminiAdapter;
