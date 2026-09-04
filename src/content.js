@@ -6,6 +6,7 @@
   let activeAdapter = null;
   let pdfRenderer = null;
   let selectedMessageIds = new Set();
+  let isAllSelected = false;
   let floatingBarEl = null;
 
   // Initialize
@@ -14,7 +15,6 @@
     activeAdapter = adapterManager.getActiveAdapter();
 
     if (!activeAdapter) {
-      // Not on a supported chat page
       return;
     }
 
@@ -26,7 +26,7 @@
     // Initial message scan & checkbox attachment
     scanAndAttachCheckboxes();
 
-    // Observe changes in chat DOM (streaming, new messages, conversation switch)
+    // Observe changes in chat DOM (streaming, scrolling, new messages)
     setupMutationObserver();
 
     // Listen for messages from extension popup
@@ -86,7 +86,17 @@
    */
   function updateCounter() {
     const counterEl = document.getElementById('chat-pdf-counter');
-    if (counterEl) {
+    if (!counterEl) return;
+
+    if (!activeAdapter) {
+      counterEl.textContent = '0';
+      return;
+    }
+
+    const total = activeAdapter.getMessageElements().length;
+    if (isAllSelected) {
+      counterEl.textContent = `${total} (All)`;
+    } else {
       counterEl.textContent = `${selectedMessageIds.size}`;
     }
   }
@@ -100,12 +110,13 @@
     const elements = activeAdapter.getMessageElements();
     elements.forEach((element) => {
       const data = activeAdapter.extractMessageData(element);
-      const isChecked = selectedMessageIds.has(data.id);
+      const isChecked = isAllSelected || selectedMessageIds.has(data.id);
 
       activeAdapter.attachCheckbox(element, isChecked, (checked) => {
         if (checked) {
           selectedMessageIds.add(data.id);
         } else {
+          isAllSelected = false;
           selectedMessageIds.delete(data.id);
         }
         updateCounter();
@@ -116,22 +127,27 @@
   }
 
   /**
-   * Select or deselect all messages currently in view
+   * Select or deselect all messages
    */
   function selectAllMessages(select) {
     if (!activeAdapter) return;
+
+    isAllSelected = select;
+    selectedMessageIds.clear();
 
     const elements = activeAdapter.getMessageElements();
     elements.forEach((element) => {
       const data = activeAdapter.extractMessageData(element);
       if (select) {
         selectedMessageIds.add(data.id);
-      } else {
-        selectedMessageIds.delete(data.id);
       }
       activeAdapter.attachCheckbox(element, select, (checked) => {
-        if (checked) selectedMessageIds.add(data.id);
-        else selectedMessageIds.delete(data.id);
+        if (checked) {
+          selectedMessageIds.add(data.id);
+        } else {
+          isAllSelected = false;
+          selectedMessageIds.delete(data.id);
+        }
         updateCounter();
       });
     });
@@ -148,21 +164,27 @@
     const elements = activeAdapter.getMessageElements();
     let exportMessages = [];
 
-    // If nothing selected, prompt user to export all
-    if (selectedMessageIds.size === 0) {
-      const confirmAll = confirm('No individual messages selected. Would you like to export the entire conversation?');
+    // Collect messages based on selection
+    elements.forEach(element => {
+      const data = activeAdapter.extractMessageData(element);
+      const checkbox = element.querySelector('.chat-pdf-checkbox');
+      const isChecked = isAllSelected ||
+                        (checkbox && checkbox.checked) ||
+                        element.classList.contains('chat-pdf-selected') ||
+                        selectedMessageIds.has(data.id);
+
+      if (isChecked) {
+        exportMessages.push(data);
+      }
+    });
+
+    // Fallback if nothing was explicitly marked
+    if (exportMessages.length === 0) {
+      const confirmAll = confirm(`No messages individually selected. Would you like to export all ${elements.length} messages?`);
       if (!confirmAll) return;
 
       elements.forEach(element => {
         exportMessages.push(activeAdapter.extractMessageData(element));
-      });
-    } else {
-      // Gather only selected messages in DOM order
-      elements.forEach(element => {
-        const data = activeAdapter.extractMessageData(element);
-        if (selectedMessageIds.has(data.id)) {
-          exportMessages.push(data);
-        }
       });
     }
 
@@ -184,7 +206,7 @@
       }
     }
 
-    pdfRenderer.exportToPdf({
+    await pdfRenderer.exportToPdf({
       title,
       providerName: activeAdapter.name,
       messages: exportMessages,
@@ -198,12 +220,11 @@
   function setupMutationObserver() {
     const debouncedScan = window.ChatPdfUtils.debounce(() => {
       scanAndAttachCheckboxes();
-    }, 300);
+    }, 250);
 
     const observer = new MutationObserver((mutations) => {
       let shouldScan = false;
       for (const mutation of mutations) {
-        // Only trigger on added nodes to avoid loops when toggling checkboxes
         if (mutation.addedNodes.length > 0) {
           for (const node of mutation.addedNodes) {
             if (node.nodeType === 1 && !node.classList?.contains('chat-pdf-select-container')) {
@@ -233,15 +254,17 @@
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
       chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.action === 'GET_STATUS') {
+          const total = activeAdapter ? activeAdapter.getMessageElements().length : 0;
           sendResponse({
             active: !!activeAdapter,
             provider: activeAdapter ? activeAdapter.name : null,
-            totalMessages: activeAdapter ? activeAdapter.getMessageElements().length : 0,
-            selectedCount: selectedMessageIds.size
+            totalMessages: total,
+            selectedCount: isAllSelected ? total : selectedMessageIds.size
           });
         } else if (request.action === 'SELECT_ALL') {
           selectAllMessages(true);
-          sendResponse({ success: true, count: selectedMessageIds.size });
+          const total = activeAdapter ? activeAdapter.getMessageElements().length : 0;
+          sendResponse({ success: true, count: total });
         } else if (request.action === 'CLEAR_SELECTION') {
           selectAllMessages(false);
           sendResponse({ success: true, count: 0 });

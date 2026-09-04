@@ -1,7 +1,7 @@
 /**
  * PDF Renderer for AI Chats
  * Generates an isolated, beautifully formatted print document for crisp vector PDF export.
- * Includes full support for KaTeX equations, numbers, code blocks, and user uploaded screenshots.
+ * Includes full support for KaTeX equations, numbers, code blocks, screenshots, and multi-page pagination.
  */
 class ChatPdfRenderer {
   constructor() {
@@ -58,7 +58,7 @@ class ChatPdfRenderer {
       const contentHtml = cleanContent ? cleanContent.innerHTML : '';
 
       return `
-        <section class="message-card ${roleClass}">
+        <article class="message-card ${roleClass}">
           <div class="message-header">
             <span class="role-badge ${roleBadgeClass}">
               <span class="role-icon">${avatarIcon}</span>
@@ -70,12 +70,12 @@ class ChatPdfRenderer {
           <div class="message-body markdown-body">
             ${contentHtml}
           </div>
-        </section>
+        </article>
       `;
     }).join('\n');
 
-    // Gather host stylesheets (KaTeX, Tailwind, ChatGPT styles)
-    const hostStylesheets = this._getHostStylesheets();
+    // Gather typography/code styles from host document (skipping SPA layout CSS that breaks pagination)
+    const hostStylesheets = this._getFilteredHostStyles();
 
     const fullHtml = `
       <!DOCTYPE html>
@@ -83,6 +83,8 @@ class ChatPdfRenderer {
       <head>
         <meta charset="utf-8">
         <title>${window.ChatPdfUtils.escapeHtml(title)}</title>
+        <!-- Official KaTeX CSS for mathematical accuracy -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
         ${hostStylesheets}
         <style>
           ${this._getPrintStyles(theme, fontSize)}
@@ -108,7 +110,7 @@ class ChatPdfRenderer {
         </main>
 
         <footer class="export-footer">
-          <span>Exported via AI Chat to PDF Extension</span>
+          <span>Exported via AI Chat to PDF Extension (${messages.length} messages)</span>
         </footer>
       </body>
       </html>
@@ -117,7 +119,7 @@ class ChatPdfRenderer {
     doc.write(fullHtml);
     doc.close();
 
-    // Wait for all images and stylesheets to fully load before printing
+    // Wait for all images and stylesheets to fully render before printing
     await this._waitForReady(doc);
 
     try {
@@ -129,26 +131,40 @@ class ChatPdfRenderer {
   }
 
   /**
-   * Clone <style> and <link rel="stylesheet"> from host document into print frame
+   * Extract only safe stylesheets (fonts, code syntax, katex) from host
+   * Avoids copying viewport-clamping CSS (height: 100%, overflow: hidden) that truncates print pages.
    */
-  _getHostStylesheets() {
+  _getFilteredHostStyles() {
     let html = '';
     const styleElements = document.querySelectorAll('style, link[rel="stylesheet"]');
     styleElements.forEach(el => {
-      // Avoid circular inclusion of our own injected styles
+      // Don't copy extension's own injected CSS
       if (el.href && el.href.includes('src/styles.css')) return;
-      html += el.outerHTML + '\n';
+
+      // If it's a link, only include if it's related to fonts, katex, or prism/highlight
+      if (el.tagName.toLowerCase() === 'link') {
+        const href = el.getAttribute('href') || '';
+        if (href.includes('font') || href.includes('katex') || href.includes('prism') || href.includes('highlight') || href.includes('cdn.oaistatic.com')) {
+          html += el.outerHTML + '\n';
+        }
+      } else if (el.tagName.toLowerCase() === 'style') {
+        // Only include inline styles that don't clamp body overflow/height
+        const text = el.textContent || '';
+        if (!text.includes('overflow:hidden') && !text.includes('height:100%')) {
+          html += el.outerHTML + '\n';
+        }
+      }
     });
     return html;
   }
 
   /**
-   * Wait until images in iframe have loaded
+   * Wait until images and fonts in iframe have loaded
    */
   async _waitForReady(doc) {
     const images = Array.from(doc.images || []);
     if (images.length === 0) {
-      await new Promise(resolve => setTimeout(resolve, 350));
+      await new Promise(resolve => setTimeout(resolve, 400));
       return;
     }
 
@@ -157,7 +173,7 @@ class ChatPdfRenderer {
       return new Promise(resolve => {
         img.onload = resolve;
         img.onerror = resolve;
-        setTimeout(resolve, 2000); // 2s timeout safeguard
+        setTimeout(resolve, 2000);
       });
     });
 
@@ -166,12 +182,11 @@ class ChatPdfRenderer {
       new Promise(resolve => setTimeout(resolve, 2500))
     ]);
 
-    // Small extra pause for font rendering
     await new Promise(resolve => setTimeout(resolve, 300));
   }
 
   /**
-   * Print layout and component styling
+   * Robust multi-page print layout and component styling
    */
   _getPrintStyles(theme, fontSize) {
     const fontSizeMap = {
@@ -184,16 +199,31 @@ class ChatPdfRenderer {
     return `
       @page {
         size: A4;
-        margin: 16mm 14mm 16mm 14mm;
+        margin: 14mm 12mm 14mm 12mm;
         @bottom-right {
           content: counter(page);
         }
       }
 
       * {
-        box-sizing: border-box;
+        box-sizing: border-box !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
+      }
+
+      /* CRITICAL: Never clamp height or overflow on root elements so multi-page printing never cuts off */
+      html, body {
+        height: auto !important;
+        min-height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        overflow-x: visible !important;
+        overflow-y: visible !important;
+        position: static !important;
+        display: block !important;
+        background-color: #ffffff !important;
+        margin: 0 !important;
+        padding: 0 !important;
       }
 
       body {
@@ -201,17 +231,14 @@ class ChatPdfRenderer {
         font-size: ${baseSize};
         line-height: 1.6;
         color: #1e293b;
-        background-color: #ffffff;
-        margin: 0;
-        padding: 0;
       }
 
       .export-header {
         border-bottom: 2px solid #e2e8f0;
-        padding-bottom: 14px;
-        margin-bottom: 22px;
-        page-break-after: avoid;
-        break-after: avoid;
+        padding-bottom: 12px;
+        margin-bottom: 20px;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
       }
 
       .chat-title {
@@ -245,20 +272,26 @@ class ChatPdfRenderer {
         font-weight: 600;
       }
 
+      /* CRITICAL: Use display: block for thread container so Chromium page fragmentation works across 50+ pages */
       .chat-thread {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
+        display: block !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
       }
 
       .message-card {
+        display: block !important;
+        width: 100% !important;
         border: 1px solid #e2e8f0;
         border-radius: 8px;
         padding: 14px 16px;
         background-color: #ffffff;
-        page-break-inside: avoid;
-        break-inside: avoid;
+        margin-bottom: 18px !important;
+        page-break-inside: auto !important;
+        break-inside: auto !important;
         position: relative;
+        box-sizing: border-box;
       }
 
       .message-card.msg-user {
@@ -278,8 +311,8 @@ class ChatPdfRenderer {
         gap: 10px;
         margin-bottom: 10px;
         font-size: 12px;
-        page-break-after: avoid;
-        break-after: avoid;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
       }
 
       .role-badge {
@@ -315,6 +348,10 @@ class ChatPdfRenderer {
       }
 
       .message-body {
+        display: block !important;
+        overflow: visible !important;
+        max-height: none !important;
+        height: auto !important;
         word-break: break-word;
       }
 
@@ -322,8 +359,8 @@ class ChatPdfRenderer {
       .chat-pdf-attachment-image {
         margin: 10px 0;
         display: block;
-        page-break-inside: avoid;
-        break-inside: avoid;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
 
       .chat-pdf-attachment-image img,
@@ -337,11 +374,11 @@ class ChatPdfRenderer {
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
         display: block;
         margin: 8px 0;
-        page-break-inside: avoid;
-        break-inside: avoid;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
 
-      /* Markdown & Prose */
+      /* Code Blocks and Markdown */
       .message-body p {
         margin: 0 0 10px 0;
       }
@@ -360,8 +397,8 @@ class ChatPdfRenderer {
         font-size: 12px;
         line-height: 1.5;
         margin: 10px 0;
-        page-break-inside: avoid;
-        break-inside: avoid;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
         white-space: pre-wrap;
         word-break: break-all;
       }
@@ -383,8 +420,8 @@ class ChatPdfRenderer {
         border-collapse: collapse;
         width: 100%;
         margin: 12px 0;
-        page-break-inside: avoid;
-        break-inside: avoid;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
 
       .message-body th, .message-body td {
@@ -423,21 +460,19 @@ class ChatPdfRenderer {
         font-size: 11px;
         color: #94a3b8;
         text-align: center;
-        page-break-before: avoid;
+        page-break-before: avoid !important;
       }
     `;
   }
 
   /**
-   * Dedicated standalone KaTeX & Math equation styling
-   * Guarantees mathematical symbols, fractions, superscripts, subscripts, matrices and numbers render accurately.
+   * Complete KaTeX layout rules for fractions, division lines, and mathematical stacks
    */
   _getKaTeXFallbackStyles() {
     return `
-      /* ================= KaTeX Equation Support ================= */
+      /* ================= Exact KaTeX Layout & Fraction Alignment ================= */
       .katex {
-        font-family: KaTeX_Main, "Times New Roman", Cambria Math, serif !important;
-        font-size: 1.15em !important;
+        font: normal 1.15em KaTeX_Main, "Times New Roman", Cambria Math, serif !important;
         line-height: 1.2 !important;
         text-indent: 0 !important;
         text-rendering: auto !important;
@@ -462,7 +497,7 @@ class ChatPdfRenderer {
         white-space: nowrap !important;
       }
 
-      /* Hide duplicate MathML so numbers aren't doubled or overlapped */
+      /* Hide duplicate MathML so numbers and symbols are never double-printed */
       .katex-mathml {
         display: none !important;
       }
@@ -483,7 +518,74 @@ class ChatPdfRenderer {
         display: inline-block !important;
       }
 
-      /* Numbers, symbols, variables, and operators */
+      /* Fractions & Division line vertical alignment */
+      .katex .mfrac {
+        display: inline-block !important;
+        vertical-align: -0.5em !important;
+        padding: 0 0.2em !important;
+        text-align: center !important;
+      }
+
+      .katex .mfrac > span > span {
+        text-align: center !important;
+      }
+
+      .katex .frac-line {
+        display: block !important;
+        border-bottom-style: solid !important;
+        border-bottom-width: 0.08em !important;
+        border-color: #0f172a !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
+      /* Exact vertical stack rules: height 0 on vlist spans prevents displaced fraction bars */
+      .katex .vlist-t {
+        display: inline-table !important;
+        table-layout: fixed !important;
+        border-collapse: collapse !important;
+      }
+
+      .katex .vlist-r {
+        display: table-row !important;
+      }
+
+      .katex .vlist {
+        display: table-cell !important;
+        vertical-align: bottom !important;
+        position: relative !important;
+        height: 100% !important;
+      }
+
+      .katex .vlist > span {
+        display: block !important;
+        height: 0 !important;
+        position: relative !important;
+      }
+
+      .katex .vlist > span > span {
+        display: inline-block !important;
+      }
+
+      .katex .vlist > span > .pstrut {
+        overflow: hidden !important;
+        width: 0 !important;
+        height: 0 !important;
+      }
+
+      .katex .vlist-t2 {
+        margin-right: -2px !important;
+      }
+
+      .katex .vlist-s {
+        display: table-cell !important;
+        vertical-align: bottom !important;
+        font-size: 1px !important;
+        width: 2px !important;
+        min-width: 2px !important;
+      }
+
+      /* Numbers, operators, division symbol (÷) and variables */
       .katex .mord, 
       .katex .mbin, 
       .katex .mrel, 
@@ -499,27 +601,15 @@ class ChatPdfRenderer {
       }
 
       .katex .mbin {
-        padding-left: 0.2222em;
-        padding-right: 0.2222em;
+        padding-left: 0.2222em !important;
+        padding-right: 0.2222em !important;
+        vertical-align: baseline !important;
       }
 
       .katex .mrel {
-        padding-left: 0.2778em;
-        padding-right: 0.2778em;
-      }
-
-      /* Fractions */
-      .katex .mfrac {
-        display: inline-block !important;
-        vertical-align: -0.5em !important;
-        padding: 0 0.2em !important;
-        text-align: center !important;
-      }
-
-      .katex .frac-line {
-        display: block !important;
-        border-bottom: 1.2px solid #0f172a !important;
-        margin: 2px 0 !important;
+        padding-left: 0.2778em !important;
+        padding-right: 0.2778em !important;
+        vertical-align: baseline !important;
       }
 
       /* Subscripts and superscripts */
@@ -529,22 +619,6 @@ class ChatPdfRenderer {
         vertical-align: 0 !important;
       }
 
-      .katex .vlist-t {
-        display: inline-table !important;
-        table-layout: fixed !important;
-        border-collapse: collapse !important;
-      }
-
-      .katex .vlist-r {
-        display: table-row !important;
-      }
-
-      .katex .vlist {
-        display: table-cell !important;
-        vertical-align: bottom !important;
-        position: relative !important;
-      }
-
       /* Square roots */
       .katex .sqrt {
         display: inline-block !important;
@@ -552,8 +626,8 @@ class ChatPdfRenderer {
       }
 
       .katex .sqrt > .root {
-        margin-left: 0.2778em;
-        margin-right: -0.5556em;
+        margin-left: 0.2778em !important;
+        margin-right: -0.5556em !important;
       }
     `;
   }

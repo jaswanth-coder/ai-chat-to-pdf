@@ -48,9 +48,17 @@ class ChatGPTAdapter extends BaseAdapter {
   }
 
   extractMessageData(element) {
+    // Use stable ID based on position/testid so React re-renders don't lose selections
     let id = element.dataset.chatPdfId;
     if (!id) {
-      id = window.ChatPdfUtils.generateId('gpt');
+      const testId = element.getAttribute('data-testid') || element.closest('[data-testid]')?.getAttribute('data-testid');
+      if (testId) {
+        id = testId;
+      } else {
+        const allRoles = Array.from(document.querySelectorAll('[data-message-author-role]'));
+        const idx = allRoles.indexOf(element);
+        id = idx !== -1 ? `turn-${idx}` : window.ChatPdfUtils.generateId('gpt');
+      }
       element.dataset.chatPdfId = id;
     }
 
