@@ -25,7 +25,7 @@ window.ChatPdfUtils = {
   },
 
   /**
-   * Deep clone a DOM node, preserving images/screenshots, equations, and stripping action controls
+   * Deep clone a DOM node, preserving images/screenshots and equations cleanly
    */
   cleanCloneForPrint(element) {
     if (!element) return null;
@@ -54,22 +54,16 @@ window.ChatPdfUtils = {
     );
     elementsToRemove.forEach(el => el.remove());
 
-    // 3. Process KaTeX / MathJax Math Equations
-    // Hide MathML duplicates so math numbers and symbols aren't rendered twice or overlapped
-    const mathMlElements = clone.querySelectorAll('.katex-mathml');
-    mathMlElements.forEach(el => {
-      el.style.setProperty('display', 'none', 'important');
-      el.setAttribute('aria-hidden', 'true');
-    });
+    // 3. Process KaTeX math equations cleanly:
+    // Remove the redundant hidden MathML blocks so only the visually rendered KaTeX HTML is printed
+    clone.querySelectorAll('.katex-mathml').forEach(el => el.remove());
 
-    // Ensure KaTeX HTML is visible and numbers are sharp
-    const katexHtmlElements = clone.querySelectorAll('.katex-html');
-    katexHtmlElements.forEach(el => {
+    // Remove aria-hidden on .katex-html so it is treated as visible by print renderers
+    clone.querySelectorAll('.katex-html').forEach(el => {
       el.removeAttribute('aria-hidden');
-      el.style.setProperty('display', 'inline-block', 'important');
     });
 
-    // 4. Ensure all images and screenshots have eager loading and inline styling
+    // 4. Ensure all images and screenshots have eager loading and high quality
     const originalImgs = element.querySelectorAll('img');
     const clonedImgs = clone.querySelectorAll('img');
 
@@ -79,14 +73,12 @@ window.ChatPdfUtils = {
       img.style.height = 'auto';
       img.style.display = 'block';
 
-      // If original image is available, attempt to capture high-res canvas data URL
       const orig = originalImgs[idx];
       if (orig) {
         if (orig.currentSrc && !img.src) {
           img.src = orig.currentSrc;
         }
 
-        // Try canvas export for instant inline rendering
         if (orig.complete && orig.naturalWidth > 0) {
           try {
             const canvas = document.createElement('canvas');
@@ -99,7 +91,7 @@ window.ChatPdfUtils = {
               img.src = dataUrl;
             }
           } catch (err) {
-            // Tainted canvas (CORS), keep original src
+            // Cross-origin fallback
           }
         }
       }

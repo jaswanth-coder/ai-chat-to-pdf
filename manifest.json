@@ -38,6 +38,7 @@
         "src/adapters/claudeAdapter.js",
         "src/adapters/geminiAdapter.js",
         "src/adapters/adapterManager.js",
+        "src/exporter/katexCss.js",
         "src/exporter/pdfRenderer.js",
         "src/content.js"
       ],

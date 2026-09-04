@@ -1,7 +1,7 @@
 /**
  * PDF Renderer for AI Chats
  * Generates an isolated, beautifully formatted print document for crisp vector PDF export.
- * Includes full support for KaTeX equations, numbers, code blocks, screenshots, and multi-page pagination.
+ * Includes official bundled KaTeX CSS for mathematical precision across multi-line equations and calculation steps.
  */
 class ChatPdfRenderer {
   constructor() {
@@ -74,7 +74,10 @@ class ChatPdfRenderer {
       `;
     }).join('\n');
 
-    // Gather typography/code styles from host document (skipping SPA layout CSS that breaks pagination)
+    // Bundled official KaTeX CSS (0ms latency, zero CDN dependency)
+    const embeddedKaTeXCss = window.KATEX_EMBEDDED_CSS || '';
+
+    // Safe typography/code styles from host
     const hostStylesheets = this._getFilteredHostStyles();
 
     const fullHtml = `
@@ -83,12 +86,13 @@ class ChatPdfRenderer {
       <head>
         <meta charset="utf-8">
         <title>${window.ChatPdfUtils.escapeHtml(title)}</title>
-        <!-- Official KaTeX CSS for mathematical accuracy -->
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
+        <!-- Official KaTeX Mathematical Engine Styles -->
+        <style id="chat-pdf-katex-bundled">
+          ${embeddedKaTeXCss}
+        </style>
         ${hostStylesheets}
-        <style>
+        <style id="chat-pdf-print-styles">
           ${this._getPrintStyles(theme, fontSize)}
-          ${this._getKaTeXFallbackStyles()}
         </style>
       </head>
       <body>
@@ -119,7 +123,7 @@ class ChatPdfRenderer {
     doc.write(fullHtml);
     doc.close();
 
-    // Wait for all images and stylesheets to fully render before printing
+    // Wait for all fonts and images in iframe to fully load and settle
     await this._waitForReady(doc);
 
     try {
@@ -131,25 +135,22 @@ class ChatPdfRenderer {
   }
 
   /**
-   * Extract only safe stylesheets (fonts, code syntax, katex) from host
-   * Avoids copying viewport-clamping CSS (height: 100%, overflow: hidden) that truncates print pages.
+   * Extract safe syntax highlighting and font stylesheets from host page
    */
   _getFilteredHostStyles() {
     let html = '';
     const styleElements = document.querySelectorAll('style, link[rel="stylesheet"]');
     styleElements.forEach(el => {
-      // Don't copy extension's own injected CSS
       if (el.href && el.href.includes('src/styles.css')) return;
 
-      // If it's a link, only include if it's related to fonts, katex, or prism/highlight
       if (el.tagName.toLowerCase() === 'link') {
         const href = el.getAttribute('href') || '';
-        if (href.includes('font') || href.includes('katex') || href.includes('prism') || href.includes('highlight') || href.includes('cdn.oaistatic.com')) {
+        if (href.includes('font') || href.includes('prism') || href.includes('highlight') || href.includes('cdn.oaistatic.com')) {
           html += el.outerHTML + '\n';
         }
       } else if (el.tagName.toLowerCase() === 'style') {
-        // Only include inline styles that don't clamp body overflow/height
         const text = el.textContent || '';
+        // Only include inline styles that don't clamp body overflow/height
         if (!text.includes('overflow:hidden') && !text.includes('height:100%')) {
           html += el.outerHTML + '\n';
         }
@@ -159,34 +160,44 @@ class ChatPdfRenderer {
   }
 
   /**
-   * Wait until images and fonts in iframe have loaded
+   * Wait until images, KaTeX fonts, and layout reflow in iframe have settled
    */
   async _waitForReady(doc) {
-    const images = Array.from(doc.images || []);
-    if (images.length === 0) {
-      await new Promise(resolve => setTimeout(resolve, 400));
-      return;
+    // 1. Wait for web fonts (KaTeX Math, AMS, etc.)
+    if (doc.fonts && doc.fonts.ready) {
+      try {
+        await Promise.race([
+          doc.fonts.ready,
+          new Promise(resolve => setTimeout(resolve, 2000))
+        ]);
+      } catch (e) {
+        console.warn('Font loading check skipped:', e);
+      }
     }
 
-    const imagePromises = images.map(img => {
-      if (img.complete) return Promise.resolve();
-      return new Promise(resolve => {
-        img.onload = resolve;
-        img.onerror = resolve;
-        setTimeout(resolve, 2000);
+    // 2. Wait for images
+    const images = Array.from(doc.images || []);
+    if (images.length > 0) {
+      const imagePromises = images.map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(resolve => {
+          img.onload = resolve;
+          img.onerror = resolve;
+          setTimeout(resolve, 2000);
+        });
       });
-    });
+      await Promise.race([
+        Promise.all(imagePromises),
+        new Promise(resolve => setTimeout(resolve, 2500))
+      ]);
+    }
 
-    await Promise.race([
-      Promise.all(imagePromises),
-      new Promise(resolve => setTimeout(resolve, 2500))
-    ]);
-
-    await new Promise(resolve => setTimeout(resolve, 300));
+    // 3. Short buffer for final layout paint
+    await new Promise(resolve => setTimeout(resolve, 250));
   }
 
   /**
-   * Robust multi-page print layout and component styling
+   * Print layout and typography styling
    */
   _getPrintStyles(theme, fontSize) {
     const fontSizeMap = {
@@ -211,7 +222,7 @@ class ChatPdfRenderer {
         print-color-adjust: exact !important;
       }
 
-      /* CRITICAL: Never clamp height or overflow on root elements so multi-page printing never cuts off */
+      /* CRITICAL: Ensure continuous page flow across long multi-page chats */
       html, body {
         height: auto !important;
         min-height: auto !important;
@@ -272,7 +283,7 @@ class ChatPdfRenderer {
         font-weight: 600;
       }
 
-      /* CRITICAL: Use display: block for thread container so Chromium page fragmentation works across 50+ pages */
+      /* Block-level thread container so pagination flows effortlessly */
       .chat-thread {
         display: block !important;
         width: 100% !important;
@@ -353,6 +364,20 @@ class ChatPdfRenderer {
         max-height: none !important;
         height: auto !important;
         word-break: break-word;
+      }
+
+      /* KaTeX Mathematical Equation Styling (Official alignment rules) */
+      .katex {
+        text-rendering: auto !important;
+        color: #0f172a !important;
+      }
+
+      .katex-display {
+        display: block !important;
+        margin: 1.2em 0 !important;
+        text-align: center !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
 
       /* Uploaded Screenshots and Images */
@@ -461,173 +486,6 @@ class ChatPdfRenderer {
         color: #94a3b8;
         text-align: center;
         page-break-before: avoid !important;
-      }
-    `;
-  }
-
-  /**
-   * Complete KaTeX layout rules for fractions, division lines, and mathematical stacks
-   */
-  _getKaTeXFallbackStyles() {
-    return `
-      /* ================= Exact KaTeX Layout & Fraction Alignment ================= */
-      .katex {
-        font: normal 1.15em KaTeX_Main, "Times New Roman", Cambria Math, serif !important;
-        line-height: 1.2 !important;
-        text-indent: 0 !important;
-        text-rendering: auto !important;
-        display: inline-block !important;
-        position: relative !important;
-        color: #0f172a !important;
-        page-break-inside: avoid !important;
-        break-inside: avoid !important;
-      }
-
-      .katex-display {
-        display: block !important;
-        margin: 1em 0 !important;
-        text-align: center !important;
-        page-break-inside: avoid !important;
-        break-inside: avoid !important;
-      }
-
-      .katex-display > .katex {
-        display: block !important;
-        text-align: center !important;
-        white-space: nowrap !important;
-      }
-
-      /* Hide duplicate MathML so numbers and symbols are never double-printed */
-      .katex-mathml {
-        display: none !important;
-      }
-
-      .katex-html {
-        display: inline-block !important;
-        position: relative !important;
-      }
-
-      .katex .base {
-        position: relative !important;
-        display: inline-block !important;
-        white-space: nowrap !important;
-        width: min-content !important;
-      }
-
-      .katex .strut {
-        display: inline-block !important;
-      }
-
-      /* Fractions & Division line vertical alignment */
-      .katex .mfrac {
-        display: inline-block !important;
-        vertical-align: -0.5em !important;
-        padding: 0 0.2em !important;
-        text-align: center !important;
-      }
-
-      .katex .mfrac > span > span {
-        text-align: center !important;
-      }
-
-      .katex .frac-line {
-        display: block !important;
-        border-bottom-style: solid !important;
-        border-bottom-width: 0.08em !important;
-        border-color: #0f172a !important;
-        margin: 0 !important;
-        padding: 0 !important;
-      }
-
-      /* Exact vertical stack rules: height 0 on vlist spans prevents displaced fraction bars */
-      .katex .vlist-t {
-        display: inline-table !important;
-        table-layout: fixed !important;
-        border-collapse: collapse !important;
-      }
-
-      .katex .vlist-r {
-        display: table-row !important;
-      }
-
-      .katex .vlist {
-        display: table-cell !important;
-        vertical-align: bottom !important;
-        position: relative !important;
-        height: 100% !important;
-      }
-
-      .katex .vlist > span {
-        display: block !important;
-        height: 0 !important;
-        position: relative !important;
-      }
-
-      .katex .vlist > span > span {
-        display: inline-block !important;
-      }
-
-      .katex .vlist > span > .pstrut {
-        overflow: hidden !important;
-        width: 0 !important;
-        height: 0 !important;
-      }
-
-      .katex .vlist-t2 {
-        margin-right: -2px !important;
-      }
-
-      .katex .vlist-s {
-        display: table-cell !important;
-        vertical-align: bottom !important;
-        font-size: 1px !important;
-        width: 2px !important;
-        min-width: 2px !important;
-      }
-
-      /* Numbers, operators, division symbol (÷) and variables */
-      .katex .mord, 
-      .katex .mbin, 
-      .katex .mrel, 
-      .katex .mopen, 
-      .katex .mclose, 
-      .katex .mpunct, 
-      .katex .minner {
-        display: inline-block !important;
-        position: relative !important;
-        color: #0f172a !important;
-        opacity: 1 !important;
-        visibility: visible !important;
-      }
-
-      .katex .mbin {
-        padding-left: 0.2222em !important;
-        padding-right: 0.2222em !important;
-        vertical-align: baseline !important;
-      }
-
-      .katex .mrel {
-        padding-left: 0.2778em !important;
-        padding-right: 0.2778em !important;
-        vertical-align: baseline !important;
-      }
-
-      /* Subscripts and superscripts */
-      .katex .msupsub {
-        display: inline-block !important;
-        position: relative !important;
-        vertical-align: 0 !important;
-      }
-
-      /* Square roots */
-      .katex .sqrt {
-        display: inline-block !important;
-        position: relative !important;
-      }
-
-      .katex .sqrt > .root {
-        margin-left: 0.2778em !important;
-        margin-right: -0.5556em !important;
       }
     `;
   }
