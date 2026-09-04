@@ -15,6 +15,18 @@
   </header>
 
   <main class="content">
+    <!-- Update Notification Banner -->
+    <div id="update-banner" class="update-banner hidden">
+      <div class="update-left">
+        <span class="update-rocket">🚀</span>
+        <div class="update-text-group">
+          <div class="update-heading">Update Available</div>
+          <div class="update-subtext"><span id="new-version-text">v1.2.0</span> is ready</div>
+        </div>
+      </div>
+      <a id="btn-update-link" class="btn-update-action" href="https://github.com/jaswanth-coder/ai-chat-to-pdf/releases/latest" target="_blank">Update</a>
+    </div>
+
     <div id="active-panel" class="panel">
       <div class="stats-card">
         <div class="stat-item">
@@ -28,8 +40,9 @@
       </div>
 
       <div class="action-buttons">
-        <button id="btn-scan-all" class="btn btn-secondary" title="Auto-scroll to harvest all messages in long chats">🔍 Scan All</button>
-        <button id="btn-select-all" class="btn btn-secondary">Select All</button>
+        <button id="btn-scan-all" class="btn btn-secondary" title="Auto-scroll to harvest all messages in long chats">🔍 Scan</button>
+        <button id="btn-select-all" class="btn btn-secondary">All</button>
+        <button id="btn-invert" class="btn btn-secondary" title="Invert selection: select unselected ones">⇄ Invert</button>
         <button id="btn-clear" class="btn btn-secondary">Clear</button>
       </div>
 

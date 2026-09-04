@@ -1,7 +1,7 @@
 /**
  * Main Content Script for AI Chat to PDF
- * Features Continuous Message Harvester to overcome DOM virtualization (30+ messages)
- * and Auto-Scroll Chat Scanner.
+ * Features Left Sidebar with Prompt Index, Smart Selection (Inverse, Prompts Only, Q&A),
+ * Continuous Message Harvester, and Auto-Scroll Chat Scanner.
  */
 (function () {
   let adapterManager = null;
@@ -13,7 +13,17 @@
   const selectedMessageIds = new Set();
   let isAllSelected = false;
   let isScanning = false;
+  let stopScanRequested = false;
+
+  // UI Element references
   let floatingBarEl = null;
+  let sidebarEl = null;
+  let sidebarToggleTabEl = null;
+  let isSidebarCollapsed = false;
+
+  // Search and filter state
+  let searchQuery = '';
+  let activeFilterMode = 'all'; // 'all' | 'prompts' | 'answers'
 
   // Safety limit to prevent browser memory exhaustion
   const MAX_EXPORT_LIMIT = 150;
@@ -29,6 +39,9 @@
 
     pdfRenderer = new window.ChatPdfRenderer();
 
+    // Inject Left Sidebar & Toggle Tab
+    createSidebar();
+
     // Inject Floating UI
     createFloatingBar();
 
@@ -43,6 +56,333 @@
 
     // Message listener for extension popup
     setupMessageListener();
+
+    // SPA URL watcher to auto-handle conversation changes
+    setupUrlWatcher();
+
+    // Check for updates from GitHub release
+    checkForUpdates();
+
+    // Automatically perform initial scan after short delay for SPA hydration
+    setTimeout(() => {
+      autoScanEntireChat({ isAuto: true });
+    }, 1500);
+  }
+
+  /**
+   * Check GitHub for newer extension release
+   */
+  async function checkForUpdates() {
+    try {
+      const banner = document.getElementById('chat-pdf-sidebar-update-banner');
+      const versionEl = document.getElementById('chat-pdf-sidebar-update-version');
+      if (!banner) return;
+      const manifest = (chrome?.runtime?.getManifest) ? chrome.runtime.getManifest() : null;
+      if (!manifest) return;
+      const currentVersion = manifest.version;
+
+      const res = await fetch('https://raw.githubusercontent.com/jaswanth-coder/ai-chat-to-pdf/main/manifest.json', { cache: 'no-cache' });
+      if (!res.ok) return;
+      const remote = await res.json();
+      if (remote && remote.version) {
+        const rParts = remote.version.split('.').map(Number);
+        const cParts = currentVersion.split('.').map(Number);
+        let isNewer = false;
+        for (let i = 0; i < Math.max(rParts.length, cParts.length); i++) {
+          const r = rParts[i] || 0;
+          const c = cParts[i] || 0;
+          if (r > c) { isNewer = true; break; }
+          if (r < c) { break; }
+        }
+        if (isNewer) {
+          if (versionEl) versionEl.textContent = `v${remote.version}`;
+          banner.style.display = 'flex';
+        }
+      }
+    } catch (e) {
+      // Offline fallback
+    }
+  }
+
+  /**
+   * Helper to find the active scrollable conversation container
+   */
+  function getScrollContainer() {
+    const candidateSelectors = [
+      'main div[class*="react-scroll-to-bottom"]',
+      'div[class*="react-scroll-to-bottom"]',
+      'main [class*="overflow-y-auto"]',
+      '[class*="overflow-y-auto"]',
+      'infinite-scroller',
+      '.chat-history',
+      '#chat-history',
+      'main'
+    ];
+
+    for (const sel of candidateSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.scrollHeight > el.clientHeight + 40) {
+        return el;
+      }
+    }
+
+    if (document.documentElement.scrollHeight > window.innerHeight + 40) {
+      return document.documentElement;
+    }
+    if (document.body.scrollHeight > window.innerHeight + 40) {
+      return document.body;
+    }
+    return document.documentElement;
+  }
+
+  /**
+   * Group harvested messages into Prompt Turns
+   * Each turn contains: { id, number, turnIndex, prompt, responses: [] }
+   */
+  function getConversationTurns() {
+    const sorted = Array.from(harvestedMessagesMap.values()).sort((a, b) => {
+      const idxA = (typeof a.turnIndex === 'number') ? a.turnIndex : 0;
+      const idxB = (typeof b.turnIndex === 'number') ? b.turnIndex : 0;
+      return idxA - idxB;
+    });
+
+    const turns = [];
+    let currentTurn = null;
+
+    for (const msg of sorted) {
+      if (msg.role === 'user') {
+        currentTurn = {
+          id: msg.id,
+          number: turns.length + 1,
+          turnIndex: typeof msg.turnIndex === 'number' ? msg.turnIndex : turns.length * 2,
+          prompt: msg,
+          responses: []
+        };
+        turns.push(currentTurn);
+      } else {
+        if (currentTurn) {
+          currentTurn.responses.push(msg);
+        } else {
+          // Assistant message before any user prompt (initial greeting)
+          currentTurn = {
+            id: msg.id,
+            number: 1,
+            turnIndex: typeof msg.turnIndex === 'number' ? msg.turnIndex : 0,
+            prompt: {
+              id: msg.id + '-intro',
+              role: 'user',
+              authorName: 'Intro',
+              text: 'Initial Assistant Greeting',
+              contentElement: null,
+              contentHtml: ''
+            },
+            responses: [msg]
+          };
+          turns.push(currentTurn);
+        }
+      }
+    }
+
+    // Fallback: If no user messages were detected, wrap every message as a turn
+    if (turns.length === 0 && sorted.length > 0) {
+      sorted.forEach((msg, idx) => {
+        turns.push({
+          id: msg.id,
+          number: idx + 1,
+          turnIndex: typeof msg.turnIndex === 'number' ? msg.turnIndex : idx,
+          prompt: msg,
+          responses: []
+        });
+      });
+    }
+
+    return turns;
+  }
+
+  /**
+   * Determine turn selection status: 'full' | 'partial' | 'none'
+   */
+  function getTurnSelectionStatus(turn) {
+    const promptSelected = selectedMessageIds.has(turn.prompt.id);
+    const respCount = turn.responses.length;
+    const selectedRespCount = turn.responses.filter(r => selectedMessageIds.has(r.id)).length;
+
+    if (respCount === 0) {
+      return promptSelected ? 'full' : 'none';
+    }
+
+    if (promptSelected && selectedRespCount === respCount) {
+      return 'full';
+    }
+    if (!promptSelected && selectedRespCount === 0) {
+      return 'none';
+    }
+    return 'partial';
+  }
+
+  /**
+   * Create Left Sidebar and its Floating Toggle Tab
+   */
+  function createSidebar() {
+    if (document.getElementById('chat-pdf-sidebar')) return;
+
+    // 1. Floating Toggle Tab (visible when sidebar is collapsed)
+    sidebarToggleTabEl = document.createElement('div');
+    sidebarToggleTabEl.id = 'chat-pdf-sidebar-toggle-tab';
+    sidebarToggleTabEl.className = 'chat-pdf-hidden';
+    sidebarToggleTabEl.title = 'Open Prompt Index Sidebar';
+    sidebarToggleTabEl.innerHTML = `
+      <span>📑</span>
+      <span class="chat-pdf-tab-text">Prompt Index</span>
+      <span id="chat-pdf-tab-count" style="font-size: 10px;">0</span>
+    `;
+    document.body.appendChild(sidebarToggleTabEl);
+
+    // 2. Sidebar Container
+    sidebarEl = document.createElement('aside');
+    sidebarEl.id = 'chat-pdf-sidebar';
+
+    sidebarEl.innerHTML = `
+      <!-- Header -->
+      <div class="chat-pdf-sidebar-header">
+        <div class="chat-pdf-sidebar-brand">
+          <span style="font-size: 18px;">📑</span>
+          <span class="chat-pdf-sidebar-title">Prompt Index</span>
+          <span class="chat-pdf-platform-pill">${activeAdapter ? activeAdapter.name : 'AI'}</span>
+        </div>
+        <div class="chat-pdf-sidebar-header-actions">
+          <button class="chat-pdf-icon-btn" id="chat-pdf-sidebar-btn-rescan" title="Re-scan full conversation">🔄</button>
+          <button class="chat-pdf-icon-btn" id="chat-pdf-sidebar-btn-collapse" title="Collapse Sidebar">◀</button>
+        </div>
+      </div>
+
+      <!-- Update Notification Banner (shows when new version is released on GitHub) -->
+      <div id="chat-pdf-sidebar-update-banner" style="display: none; padding: 6px 14px; background: linear-gradient(135deg, #eff6ff, #dbeafe); border-bottom: 1px solid #bfdbfe; font-size: 11px; align-items: center; justify-content: space-between;">
+        <span style="color: #1e40af; font-weight: 600;">🚀 Update <span id="chat-pdf-sidebar-update-version">v1.2.0</span> ready!</span>
+        <a href="https://github.com/jaswanth-coder/ai-chat-to-pdf/releases/latest" target="_blank" style="background: #2563eb; color: #ffffff; padding: 2px 8px; border-radius: 4px; font-weight: 700; text-decoration: none; font-size: 10px;">Update</a>
+      </div>
+
+      <!-- Search Box -->
+      <div class="chat-pdf-search-wrap">
+        <div class="chat-pdf-search-box">
+          <input type="text" id="chat-pdf-sidebar-search" placeholder="🔍 Search prompts..." />
+          <button class="chat-pdf-search-clear" id="chat-pdf-sidebar-search-clear" style="display: none;">✕</button>
+        </div>
+      </div>
+
+      <!-- Smart Selection Toolbar -->
+      <div class="chat-pdf-smart-toolbar">
+        <div class="chat-pdf-smart-btn-row">
+          <button class="chat-pdf-smart-btn" id="chat-pdf-smart-all" title="Select all prompts & answers">Select All</button>
+          <button class="chat-pdf-smart-btn chat-pdf-smart-btn-inverse" id="chat-pdf-smart-inverse" title="Invert selection: select all unselected ones, unselect selected ones">⇄ Inverse</button>
+          <button class="chat-pdf-smart-btn" id="chat-pdf-smart-clear" title="Clear all selections">Clear</button>
+        </div>
+        <div class="chat-pdf-smart-filters">
+          <button class="chat-pdf-filter-pill chat-pdf-active" data-mode="all" title="Export both user prompts & AI responses">All Q&A</button>
+          <button class="chat-pdf-filter-pill" data-mode="prompts" title="Select only user prompts">Prompts Only</button>
+          <button class="chat-pdf-filter-pill" data-mode="answers" title="Select only AI responses">Answers Only</button>
+        </div>
+      </div>
+
+      <!-- Auto-Scan Banner -->
+      <div class="chat-pdf-scan-status-bar" id="chat-pdf-scan-banner" style="display: none;">
+        <div>
+          <span class="chat-pdf-spinner" id="chat-pdf-scan-spinner"></span>
+          <span id="chat-pdf-scan-text">Scanning conversation...</span>
+        </div>
+        <button class="chat-pdf-scan-stop-btn" id="chat-pdf-scan-stop-btn">Stop</button>
+      </div>
+
+      <!-- Selection Summary -->
+      <div class="chat-pdf-selection-summary">
+        <span id="chat-pdf-summary-text">0 of 0 prompts selected</span>
+        <span class="chat-pdf-selected-count-badge" id="chat-pdf-summary-badge">0 msgs</span>
+      </div>
+
+      <!-- Prompt List -->
+      <div class="chat-pdf-prompt-list" id="chat-pdf-prompt-list">
+        <div class="chat-pdf-empty-index">Scanning prompts...</div>
+      </div>
+
+      <!-- Footer / Export -->
+      <div class="chat-pdf-sidebar-footer">
+        <button class="chat-pdf-sidebar-export-btn" id="chat-pdf-sidebar-export-btn">
+          <span>📥</span> Download PDF (<span id="chat-pdf-sidebar-export-count">0</span>)
+        </button>
+      </div>
+    `;
+
+    document.body.appendChild(sidebarEl);
+
+    // Sidebar Event Handlers
+    const btnCollapse = sidebarEl.querySelector('#chat-pdf-sidebar-btn-collapse');
+    const btnRescan = sidebarEl.querySelector('#chat-pdf-sidebar-btn-rescan');
+    const btnExport = sidebarEl.querySelector('#chat-pdf-sidebar-export-btn');
+    const searchInput = sidebarEl.querySelector('#chat-pdf-sidebar-search');
+    const searchClear = sidebarEl.querySelector('#chat-pdf-sidebar-search-clear');
+    const btnStopScan = sidebarEl.querySelector('#chat-pdf-scan-stop-btn');
+
+    // Smart Selection buttons
+    const btnSmartAll = sidebarEl.querySelector('#chat-pdf-smart-all');
+    const btnSmartInverse = sidebarEl.querySelector('#chat-pdf-smart-inverse');
+    const btnSmartClear = sidebarEl.querySelector('#chat-pdf-smart-clear');
+
+    // Collapse / Expand
+    btnCollapse.addEventListener('click', () => setSidebarCollapsed(true));
+    sidebarToggleTabEl.addEventListener('click', () => setSidebarCollapsed(false));
+
+    // Rescan & Stop
+    btnRescan.addEventListener('click', () => autoScanEntireChat({ isAuto: false }));
+    btnStopScan.addEventListener('click', () => {
+      stopScanRequested = true;
+    });
+
+    // Export
+    btnExport.addEventListener('click', handleExport);
+
+    // Smart selections
+    btnSmartAll.addEventListener('click', () => selectAllMessages(true));
+    btnSmartClear.addEventListener('click', () => selectAllMessages(false));
+    btnSmartInverse.addEventListener('click', invertSelection);
+
+    // Filter pills (All Q&A / Prompts Only / Answers Only)
+    const filterPills = sidebarEl.querySelectorAll('.chat-pdf-filter-pill');
+    filterPills.forEach(pill => {
+      pill.addEventListener('click', () => {
+        filterPills.forEach(p => p.classList.remove('chat-pdf-active'));
+        pill.classList.add('chat-pdf-active');
+        const mode = pill.dataset.mode;
+        activeFilterMode = mode;
+        applyFilterMode(mode);
+      });
+    });
+
+    // Search input
+    searchInput.addEventListener('input', (e) => {
+      searchQuery = (e.target.value || '').trim().toLowerCase();
+      searchClear.style.display = searchQuery ? 'block' : 'none';
+      renderSidebarPromptList();
+    });
+
+    searchClear.addEventListener('click', () => {
+      searchInput.value = '';
+      searchQuery = '';
+      searchClear.style.display = 'none';
+      renderSidebarPromptList();
+    });
+  }
+
+  /**
+   * Set sidebar collapsed state
+   */
+  function setSidebarCollapsed(collapsed) {
+    isSidebarCollapsed = collapsed;
+    if (sidebarEl) {
+      sidebarEl.classList.toggle('chat-pdf-collapsed', collapsed);
+    }
+    if (sidebarToggleTabEl) {
+      sidebarToggleTabEl.classList.toggle('chat-pdf-hidden', !collapsed);
+    }
   }
 
   /**
@@ -62,13 +402,15 @@
           <span class="chat-pdf-badge" id="chat-pdf-counter">0</span>
         </div>
         <div class="chat-pdf-btn-group">
-          <button class="chat-pdf-btn" id="chat-pdf-btn-scan" title="Auto-scroll to load and capture the entire chat">
+          <button class="chat-pdf-btn" id="chat-pdf-btn-sidebar" title="Toggle Prompt Index Sidebar">
+            <span>📑</span> Prompts
+          </button>
+          <button class="chat-pdf-btn" id="chat-pdf-btn-scan" title="Auto-scroll to harvest and index all prompts">
             <span>🔍</span> Scan All
           </button>
-          <button class="chat-pdf-btn" id="chat-pdf-btn-all" title="Select all captured messages">Select All</button>
-          <button class="chat-pdf-btn" id="chat-pdf-btn-clear" title="Clear selection">Clear</button>
+          <button class="chat-pdf-btn" id="chat-pdf-btn-inverse" title="Invert selection">⇄ Invert</button>
           <button class="chat-pdf-btn chat-pdf-btn-primary" id="chat-pdf-btn-export" title="Download selected as PDF">
-            <span>📥</span> Download PDF
+            <span>📥</span> Download
           </button>
         </div>
       </div>
@@ -78,15 +420,15 @@
     document.body.appendChild(floatingBarEl);
 
     // Event handlers
+    const btnSidebar = floatingBarEl.querySelector('#chat-pdf-btn-sidebar');
     const btnScan = floatingBarEl.querySelector('#chat-pdf-btn-scan');
-    const btnAll = floatingBarEl.querySelector('#chat-pdf-btn-all');
-    const btnClear = floatingBarEl.querySelector('#chat-pdf-btn-clear');
+    const btnInverse = floatingBarEl.querySelector('#chat-pdf-btn-inverse');
     const btnExport = floatingBarEl.querySelector('#chat-pdf-btn-export');
     const btnToggle = floatingBarEl.querySelector('#chat-pdf-btn-toggle');
 
-    btnScan.addEventListener('click', autoScanEntireChat);
-    btnAll.addEventListener('click', () => selectAllMessages(true));
-    btnClear.addEventListener('click', () => selectAllMessages(false));
+    btnSidebar.addEventListener('click', () => setSidebarCollapsed(!isSidebarCollapsed));
+    btnScan.addEventListener('click', () => autoScanEntireChat({ isAuto: false }));
+    btnInverse.addEventListener('click', invertSelection);
     btnExport.addEventListener('click', handleExport);
 
     let isMinimized = false;
@@ -94,7 +436,7 @@
       isMinimized = !isMinimized;
       floatingBarEl.classList.toggle('chat-pdf-minimized', isMinimized);
       btnToggle.textContent = isMinimized ? '📄' : '✕';
-      btnToggle.title = isMinimized ? 'Expand PDF Exporter' : 'Minimize';
+      btnToggle.title = isMinimized ? 'Expand PDF Toolbar' : 'Minimize';
     });
   }
 
@@ -113,7 +455,7 @@
         harvestedMessagesMap.set(data.id, data);
       }
 
-      // If "Select All" was clicked, automatically mark new items
+      // If "Select All" was previously clicked, mark newly discovered items
       if (isAllSelected) {
         selectedMessageIds.add(data.id);
       }
@@ -127,31 +469,248 @@
           isAllSelected = false;
           selectedMessageIds.delete(data.id);
         }
-        updateCounter();
+        updateUI();
       });
     });
 
-    updateCounter();
+    updateUI();
   }
 
   /**
-   * Update the badge counter showing total harvested and selected count
+   * Render the prompt index list in the left sidebar
    */
-  function updateCounter() {
-    const counterEl = document.getElementById('chat-pdf-counter');
-    if (!counterEl) return;
+  function renderSidebarPromptList() {
+    const listContainer = document.getElementById('chat-pdf-prompt-list');
+    if (!listContainer) return;
 
-    if (isScanning) {
-      counterEl.textContent = `Scanning... (${harvestedMessagesMap.size})`;
+    const turns = getConversationTurns();
+
+    // Filter turns if search query is present
+    const filteredTurns = searchQuery
+      ? turns.filter(turn => {
+          const promptText = (turn.prompt.text || '').toLowerCase();
+          const responsesText = turn.responses.map(r => r.text || '').join(' ').toLowerCase();
+          return promptText.includes(searchQuery) || responsesText.includes(searchQuery);
+        })
+      : turns;
+
+    if (filteredTurns.length === 0) {
+      listContainer.innerHTML = `
+        <div class="chat-pdf-empty-index">
+          ${searchQuery ? 'No prompts matching "' + escapeHtml(searchQuery) + '"' : (isScanning ? 'Scanning prompts...' : 'No conversation prompts found yet. Try scrolling or click "🔄 Re-scan".')}
+        </div>
+      `;
       return;
     }
 
-    const totalHarvested = harvestedMessagesMap.size;
-    if (isAllSelected) {
-      counterEl.textContent = `${totalHarvested} (All)`;
-    } else {
-      counterEl.textContent = `${selectedMessageIds.size} / ${totalHarvested}`;
+    let html = '';
+    filteredTurns.forEach((turn) => {
+      const status = getTurnSelectionStatus(turn);
+      const isSelected = status === 'full' || status === 'partial';
+      const promptFull = turn.prompt.text || 'Untitled Prompt';
+      const promptSnippet = promptFull.length > 85 ? promptFull.slice(0, 85) + '...' : promptFull;
+
+      // Extract response preview
+      let respSnippet = '';
+      if (turn.responses.length > 0) {
+        const firstResp = turn.responses[0].text || '';
+        respSnippet = firstResp.length > 70 ? firstResp.slice(0, 70) + '...' : firstResp;
+      }
+
+      html += `
+        <div class="chat-pdf-prompt-item ${isSelected ? 'chat-pdf-turn-selected' : ''}" data-turn-id="${turn.id}">
+          <input type="checkbox" class="chat-pdf-item-checkbox" ${status === 'full' ? 'checked' : ''} ${status === 'partial' ? 'data-indeterminate="true"' : ''} />
+          <span class="chat-pdf-turn-badge">#${turn.number}</span>
+          <div class="chat-pdf-prompt-body">
+            <div class="chat-pdf-prompt-title" title="${escapeHtml(promptFull)}">${escapeHtml(promptSnippet)}</div>
+            <div class="chat-pdf-prompt-preview">
+              ${respSnippet ? '🤖 ' + escapeHtml(respSnippet) : (turn.responses.length > 0 ? `🤖 ${turn.responses.length} response(s)` : 'Waiting for answer...')}
+            </div>
+          </div>
+          <button class="chat-pdf-jump-btn" title="Jump to this message in chat">🎯</button>
+        </div>
+      `;
+    });
+
+    listContainer.innerHTML = html;
+
+    // Handle indeterminate checkboxes & attach card click events
+    const itemCards = listContainer.querySelectorAll('.chat-pdf-prompt-item');
+    itemCards.forEach((card, index) => {
+      const turn = filteredTurns[index];
+      const checkbox = card.querySelector('.chat-pdf-item-checkbox');
+      const jumpBtn = card.querySelector('.chat-pdf-jump-btn');
+
+      if (checkbox && checkbox.dataset.indeterminate === 'true') {
+        checkbox.indeterminate = true;
+      }
+
+      // Card click toggles selection
+      card.addEventListener('click', (e) => {
+        if (e.target === jumpBtn || jumpBtn.contains(e.target)) {
+          return; // Jump handled separately
+        }
+        if (e.target !== checkbox) {
+          toggleTurn(turn);
+        }
+      });
+
+      // Checkbox click
+      checkbox.addEventListener('change', (e) => {
+        e.stopPropagation();
+        toggleTurn(turn, checkbox.checked);
+      });
+
+      // Jump button click
+      jumpBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        jumpToTurn(turn);
+      });
+    });
+  }
+
+  /**
+   * Jump smoothly to a turn in the conversation
+   */
+  function jumpToTurn(turn) {
+    if (!turn || !turn.prompt) return;
+
+    let targetEl = turn.prompt.contentElement;
+    if (!targetEl || !document.contains(targetEl)) {
+      targetEl = document.querySelector(`[data-chat-pdf-id="${turn.prompt.id}"]`);
     }
+
+    if (targetEl && document.contains(targetEl)) {
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      targetEl.classList.remove('chat-pdf-pulse-highlight');
+      void targetEl.offsetWidth; // force repaint
+      targetEl.classList.add('chat-pdf-pulse-highlight');
+      setTimeout(() => targetEl.classList.remove('chat-pdf-pulse-highlight'), 2000);
+    } else {
+      // Virtualized: approximate container scroll position
+      const scrollContainer = getScrollContainer();
+      const turns = getConversationTurns();
+      const total = Math.max(1, turns.length);
+      const ratio = Math.max(0, Math.min(1, (turn.number - 1) / total));
+      const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+      scrollContainer.scrollTo({ top: ratio * maxScroll, behavior: 'smooth' });
+
+      // After scroll settles and DOM mounts
+      setTimeout(() => {
+        harvestAndAttach();
+        const mountedEl = document.querySelector(`[data-chat-pdf-id="${turn.prompt.id}"]`) ||
+                          activeAdapter?.getMessageElements()?.find(el => {
+                            const d = activeAdapter.extractMessageData(el);
+                            return d && d.id === turn.prompt.id;
+                          });
+        if (mountedEl) {
+          mountedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          mountedEl.classList.add('chat-pdf-pulse-highlight');
+          setTimeout(() => mountedEl.classList.remove('chat-pdf-pulse-highlight'), 2000);
+        }
+      }, 350);
+    }
+  }
+
+  /**
+   * Toggle a specific turn's selection
+   */
+  function toggleTurn(turn, forceState = null) {
+    const currentStatus = getTurnSelectionStatus(turn);
+    const shouldSelect = forceState !== null ? forceState : (currentStatus !== 'full');
+
+    if (shouldSelect) {
+      selectedMessageIds.add(turn.prompt.id);
+      turn.responses.forEach(r => selectedMessageIds.add(r.id));
+    } else {
+      selectedMessageIds.delete(turn.prompt.id);
+      turn.responses.forEach(r => selectedMessageIds.delete(r.id));
+    }
+
+    isAllSelected = (selectedMessageIds.size === harvestedMessagesMap.size && harvestedMessagesMap.size > 0);
+    syncInChatCheckboxes();
+    updateUI();
+  }
+
+  /**
+   * Synchronize in-chat checkboxes mounted in DOM with selectedMessageIds
+   */
+  function syncInChatCheckboxes() {
+    if (!activeAdapter) return;
+    const elements = activeAdapter.getMessageElements();
+    elements.forEach(element => {
+      const data = activeAdapter.extractMessageData(element);
+      if (data && data.id) {
+        const isChecked = selectedMessageIds.has(data.id);
+        const checkbox = element.querySelector('.chat-pdf-checkbox');
+        if (checkbox) {
+          checkbox.checked = isChecked;
+        }
+        if (isChecked) {
+          element.classList.add('chat-pdf-selected');
+        } else {
+          element.classList.remove('chat-pdf-selected');
+        }
+      }
+    });
+  }
+
+  /**
+   * Smart Selection: Invert current selection
+   * Selects all unselected turns and deselects selected ones
+   */
+  function invertSelection() {
+    const turns = getConversationTurns();
+    if (turns.length === 0) return;
+
+    turns.forEach(turn => {
+      const status = getTurnSelectionStatus(turn);
+      if (status === 'full' || status === 'partial') {
+        // Unselect turn
+        selectedMessageIds.delete(turn.prompt.id);
+        turn.responses.forEach(r => selectedMessageIds.delete(r.id));
+      } else {
+        // Select turn
+        selectedMessageIds.add(turn.prompt.id);
+        turn.responses.forEach(r => selectedMessageIds.add(r.id));
+      }
+    });
+
+    isAllSelected = (selectedMessageIds.size === harvestedMessagesMap.size && harvestedMessagesMap.size > 0);
+    syncInChatCheckboxes();
+    updateUI();
+  }
+
+  /**
+   * Smart Filter Modes: All Q&A / Prompts Only / Answers Only
+   */
+  function applyFilterMode(mode) {
+    const turns = getConversationTurns();
+    selectedMessageIds.clear();
+
+    if (mode === 'all') {
+      // Select both prompt and all responses
+      turns.forEach(turn => {
+        selectedMessageIds.add(turn.prompt.id);
+        turn.responses.forEach(r => selectedMessageIds.add(r.id));
+      });
+      isAllSelected = true;
+    } else if (mode === 'prompts') {
+      // Select only user prompts
+      turns.forEach(turn => {
+        selectedMessageIds.add(turn.prompt.id);
+      });
+      isAllSelected = false;
+    } else if (mode === 'answers') {
+      // Select only assistant responses
+      turns.forEach(turn => {
+        turn.responses.forEach(r => selectedMessageIds.add(r.id));
+      });
+      isAllSelected = false;
+    }
+
+    syncInChatCheckboxes();
+    updateUI();
   }
 
   /**
@@ -167,34 +726,78 @@
       });
     }
 
-    // Update all checkboxes currently mounted in DOM
-    if (activeAdapter) {
-      const elements = activeAdapter.getMessageElements();
-      elements.forEach((element) => {
-        activeAdapter.attachCheckbox(element, select, (checked) => {
-          const data = activeAdapter.extractMessageData(element);
-          if (checked) {
-            selectedMessageIds.add(data.id);
-          } else {
-            isAllSelected = false;
-            selectedMessageIds.delete(data.id);
-          }
-          updateCounter();
-        });
-      });
+    syncInChatCheckboxes();
+    updateUI();
+  }
+
+  /**
+   * Update UI badges, counters, and sidebar list
+   */
+  function updateUI() {
+    updateCounters();
+    renderSidebarPromptList();
+  }
+
+  /**
+   * Update all badge counters across sidebar and floating bar
+   */
+  function updateCounters() {
+    const turns = getConversationTurns();
+    const totalPrompts = turns.length;
+    const selectedPrompts = turns.filter(t => getTurnSelectionStatus(t) === 'full' || getTurnSelectionStatus(t) === 'partial').length;
+    const totalMessages = harvestedMessagesMap.size;
+    const selectedCount = isAllSelected ? totalMessages : selectedMessageIds.size;
+
+    // Floating bar badge
+    const counterEl = document.getElementById('chat-pdf-counter');
+    if (counterEl) {
+      if (isScanning) {
+        counterEl.textContent = `Scanning... (${totalPrompts} prompts)`;
+      } else if (isAllSelected) {
+        counterEl.textContent = `${totalPrompts} prompts (All)`;
+      } else {
+        counterEl.textContent = `${selectedPrompts} / ${totalPrompts} prompts`;
+      }
     }
 
-    updateCounter();
+    // Sidebar summary
+    const summaryText = document.getElementById('chat-pdf-summary-text');
+    if (summaryText) {
+      summaryText.textContent = `${selectedPrompts} of ${totalPrompts} prompts selected`;
+    }
+
+    const summaryBadge = document.getElementById('chat-pdf-summary-badge');
+    if (summaryBadge) {
+      summaryBadge.textContent = `${selectedCount} msg${selectedCount === 1 ? '' : 's'}`;
+    }
+
+    // Sidebar export button count
+    const exportCount = document.getElementById('chat-pdf-sidebar-export-count');
+    if (exportCount) {
+      exportCount.textContent = selectedCount;
+    }
+
+    // Floating tab count
+    const tabCount = document.getElementById('chat-pdf-tab-count');
+    if (tabCount) {
+      tabCount.textContent = `${selectedPrompts}/${totalPrompts}`;
+    }
+
+    // Export button enabled/disabled
+    const exportBtn = document.getElementById('chat-pdf-sidebar-export-btn');
+    if (exportBtn) {
+      exportBtn.disabled = selectedCount === 0;
+    }
   }
 
   /**
    * Continuous Scroll Harvester
-   * Whenever user scrolls up or down, captures newly mounted DOM messages into memory
+   * Captures newly mounted DOM messages into memory whenever the page is scrolled
    */
   function setupScrollHarvester() {
     const debouncedHarvest = window.ChatPdfUtils.debounce(() => {
       harvestAndAttach();
-    }, 150);
+    }, 120);
 
     window.addEventListener('scroll', debouncedHarvest, { passive: true });
     document.addEventListener('scroll', debouncedHarvest, { passive: true, capture: true });
@@ -202,51 +805,102 @@
 
   /**
    * Auto-Scan Entire Chat (smooth auto-scroll up and down)
-   * Resolves ChatGPT 30-message virtualization by loading all messages into the persistent store
+   * Automatically indexes all conversations and prompts into the left sidebar
    */
-  async function autoScanEntireChat() {
+  async function autoScanEntireChat(options = {}) {
     if (isScanning) return;
     isScanning = true;
-    updateCounter();
+    stopScanRequested = false;
 
-    // Find ChatGPT's scrollable conversation container
-    const scrollContainer = document.querySelector('main div[class*="react-scroll-to-bottom"], main, [class*="overflow-y-auto"]') || document.documentElement;
+    const banner = document.getElementById('chat-pdf-scan-banner');
+    const bannerText = document.getElementById('chat-pdf-scan-text');
+    const spinner = document.getElementById('chat-pdf-scan-spinner');
 
+    if (banner) {
+      banner.style.display = 'flex';
+      banner.className = 'chat-pdf-scan-status-bar scanning';
+      if (spinner) spinner.style.display = 'inline-block';
+      if (bannerText) bannerText.textContent = 'Auto-scanning chat...';
+    }
+
+    updateCounters();
+
+    const scrollContainer = getScrollContainer();
     const originalScrollTop = scrollContainer.scrollTop;
 
-    // 1. Scroll upward to mount and harvest older messages
-    let lastTop = -1;
-    let attempts = 0;
-    while (scrollContainer.scrollTop > 0 && attempts < 35) {
-      if (scrollContainer.scrollTop === lastTop) break;
-      lastTop = scrollContainer.scrollTop;
-      scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - 900);
-      await new Promise(r => setTimeout(r, 120));
+    try {
+      // 1. Initial harvest pass
       harvestAndAttach();
-      attempts++;
-    }
 
-    // 2. Scroll downward to mount and harvest all responses down to the bottom
-    let lastHeight = -1;
-    attempts = 0;
-    while (attempts < 35) {
-      const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-      if (scrollContainer.scrollTop >= maxScroll - 50 && scrollContainer.scrollHeight === lastHeight) break;
-      lastHeight = scrollContainer.scrollHeight;
-      scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + 900);
-      await new Promise(r => setTimeout(r, 120));
+      // 2. Scroll upward to mount and harvest older messages
+      let lastTop = -1;
+      let attempts = 0;
+      const maxAttempts = 35;
+
+      while (scrollContainer.scrollTop > 10 && attempts < maxAttempts) {
+        if (stopScanRequested) break;
+        if (scrollContainer.scrollTop === lastTop) break;
+        lastTop = scrollContainer.scrollTop;
+        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - 950);
+        await new Promise(r => setTimeout(r, 110));
+        harvestAndAttach();
+
+        if (bannerText) {
+          bannerText.textContent = `Scanning upward... (${getConversationTurns().length} prompts)`;
+        }
+        attempts++;
+      }
+
+      // 3. Scroll downward to mount and harvest all responses down to the bottom
+      let lastHeight = -1;
+      attempts = 0;
+      while (attempts < maxAttempts) {
+        if (stopScanRequested) break;
+        const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+        if (scrollContainer.scrollTop >= maxScroll - 30 && scrollContainer.scrollHeight === lastHeight) {
+          break;
+        }
+        lastHeight = scrollContainer.scrollHeight;
+        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + 950);
+        await new Promise(r => setTimeout(r, 110));
+        harvestAndAttach();
+
+        if (bannerText) {
+          bannerText.textContent = `Scanning downward... (${getConversationTurns().length} prompts)`;
+        }
+        attempts++;
+      }
+
+      // Final harvest pass
       harvestAndAttach();
-      attempts++;
+
+      // Select all by default after initial scan if nothing selected yet
+      if (selectedMessageIds.size === 0) {
+        selectAllMessages(true);
+      }
+
+      // Restore user's original scroll position smoothly
+      scrollContainer.scrollTop = originalScrollTop;
+
+      if (banner) {
+        banner.className = 'chat-pdf-scan-status-bar';
+        if (spinner) spinner.style.display = 'none';
+        const count = getConversationTurns().length;
+        if (bannerText) {
+          bannerText.textContent = stopScanRequested ? `Scan stopped — ${count} prompts indexed` : `✓ Scan complete — ${count} prompts indexed`;
+        }
+        // Auto-fade banner after 4 seconds
+        setTimeout(() => {
+          if (!isScanning && banner) banner.style.display = 'none';
+        }, 4000);
+      }
+    } catch (err) {
+      console.error('Chat auto-scan error:', err);
+    } finally {
+      isScanning = false;
+      stopScanRequested = false;
+      updateUI();
     }
-
-    // Final harvest pass
-    harvestAndAttach();
-
-    // Auto-select all harvested messages
-    selectAllMessages(true);
-
-    isScanning = false;
-    updateCounter();
   }
 
   /**
@@ -255,16 +909,13 @@
   async function handleExport() {
     if (!activeAdapter) return;
 
-    // Refresh currently visible DOM messages first
     harvestAndAttach();
 
     let exportMessages = [];
 
     if (isAllSelected || selectedMessageIds.size === 0) {
-      // Export all harvested messages
       exportMessages = Array.from(harvestedMessagesMap.values());
     } else {
-      // Export only chosen messages
       harvestedMessagesMap.forEach((data, id) => {
         if (selectedMessageIds.has(id)) {
           exportMessages.push(data);
@@ -272,9 +923,8 @@
       });
     }
 
-    // If still empty, confirm export all
     if (exportMessages.length === 0) {
-      const confirmAll = confirm(`Export all ${harvestedMessagesMap.size} harvested messages?`);
+      const confirmAll = confirm(`Export all ${harvestedMessagesMap.size} messages?`);
       if (!confirmAll) return;
       exportMessages = Array.from(harvestedMessagesMap.values());
     }
@@ -284,7 +934,6 @@
       return;
     }
 
-    // Apply safe limit if chat is excessively long (>150 messages)
     if (exportMessages.length > MAX_EXPORT_LIMIT) {
       const proceed = confirm(
         `You have ${exportMessages.length} messages selected. For best PDF rendering and performance, the top ${MAX_EXPORT_LIMIT} messages will be exported. Proceed?`
@@ -314,7 +963,7 @@
   }
 
   /**
-   * Setup MutationObserver
+   * Setup MutationObserver for DOM changes
    */
   function setupMutationObserver() {
     const debouncedScan = window.ChatPdfUtils.debounce(() => {
@@ -326,7 +975,13 @@
       for (const mutation of mutations) {
         if (mutation.addedNodes.length > 0) {
           for (const node of mutation.addedNodes) {
-            if (node.nodeType === 1 && !node.classList?.contains('chat-pdf-select-container')) {
+            if (
+              node.nodeType === 1 &&
+              !node.classList?.contains('chat-pdf-select-container') &&
+              node.id !== 'chat-pdf-sidebar' &&
+              node.id !== 'chat-pdf-floating-bar' &&
+              node.id !== 'chat-pdf-sidebar-toggle-tab'
+            ) {
               shouldScan = true;
               break;
             }
@@ -347,17 +1002,55 @@
   }
 
   /**
+   * Watch for SPA conversation URL changes (ChatGPT, Claude, Gemini)
+   */
+  function setupUrlWatcher() {
+    let lastUrl = window.location.href;
+    setInterval(() => {
+      if (window.location.href !== lastUrl) {
+        lastUrl = window.location.href;
+        // Clean reset for new conversation
+        harvestedMessagesMap.clear();
+        selectedMessageIds.clear();
+        isAllSelected = false;
+        updateUI();
+
+        // Auto-scan new conversation after hydration
+        setTimeout(() => {
+          autoScanEntireChat({ isAuto: true });
+        }, 1500);
+      }
+    }, 1000);
+  }
+
+  /**
+   * Escape HTML helper
+   */
+  function escapeHtml(str) {
+    if (!str) return '';
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  /**
    * Setup message listener for popup
    */
   function setupMessageListener() {
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
       chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.action === 'GET_STATUS') {
+          const turns = getConversationTurns();
           sendResponse({
             active: !!activeAdapter,
             provider: activeAdapter ? activeAdapter.name : null,
             totalMessages: harvestedMessagesMap.size,
-            selectedCount: isAllSelected ? harvestedMessagesMap.size : selectedMessageIds.size
+            selectedCount: isAllSelected ? harvestedMessagesMap.size : selectedMessageIds.size,
+            totalPrompts: turns.length,
+            selectedPrompts: turns.filter(t => getTurnSelectionStatus(t) !== 'none').length
           });
         } else if (request.action === 'SELECT_ALL') {
           selectAllMessages(true);
@@ -365,8 +1058,11 @@
         } else if (request.action === 'CLEAR_SELECTION') {
           selectAllMessages(false);
           sendResponse({ success: true, count: 0 });
+        } else if (request.action === 'INVERT_SELECTION') {
+          invertSelection();
+          sendResponse({ success: true, count: selectedMessageIds.size });
         } else if (request.action === 'SCAN_ALL') {
-          autoScanEntireChat().then(() => {
+          autoScanEntireChat({ isAuto: false }).then(() => {
             sendResponse({ success: true, count: harvestedMessagesMap.size });
           });
           return true; // async

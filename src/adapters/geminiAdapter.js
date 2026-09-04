@@ -53,11 +53,28 @@ class GeminiAdapter extends BaseAdapter {
                            element.querySelector('message-content') ||
                            element;
 
+    const allTurns = this.getMessageElements();
+    const turnIndex = allTurns.indexOf(element);
+
+    let contentHtml = '';
+    if (window.ChatPdfUtils && window.ChatPdfUtils.cleanCloneForPrint) {
+      const cleanNode = window.ChatPdfUtils.cleanCloneForPrint(contentElement);
+      contentHtml = cleanNode ? cleanNode.innerHTML : '';
+    }
+
+    let text = '';
+    if (contentElement) {
+      text = (contentElement.innerText || contentElement.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+
     return {
       id,
+      turnIndex: turnIndex >= 0 ? turnIndex : 0,
       role,
       authorName,
+      text,
       contentElement,
+      contentHtml,
       timestamp: window.ChatPdfUtils.formatDate()
     };
   }

@@ -238,3 +238,747 @@ model-response:hover .chat-pdf-select-container,
   padding: 6px 10px;
   cursor: pointer;
 }
+
+/* --------------------------------------------------------------------------
+   Left Sidebar - Prompt Index & Smart Selection
+   -------------------------------------------------------------------------- */
+#chat-pdf-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 340px;
+  max-width: 90vw;
+  background: #ffffff;
+  border-right: 1px solid #e2e8f0;
+  box-shadow: 4px 0 25px rgba(0, 0, 0, 0.12);
+  z-index: 999998;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #1e293b;
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateX(0);
+}
+
+#chat-pdf-sidebar.chat-pdf-collapsed {
+  transform: translateX(-100%);
+}
+
+/* Left edge floating tab when collapsed */
+#chat-pdf-sidebar-toggle-tab {
+  position: fixed;
+  top: 48%;
+  left: 0;
+  transform: translateY(-50%);
+  z-index: 999997;
+  background: #10a37f;
+  color: #ffffff;
+  padding: 10px 8px;
+  border-radius: 0 8px 8px 0;
+  box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  user-select: none;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+#chat-pdf-sidebar-toggle-tab:hover {
+  background: #0d8a6a;
+  transform: translateY(-50%) translateX(2px);
+}
+
+#chat-pdf-sidebar-toggle-tab.chat-pdf-hidden {
+  display: none !important;
+}
+
+.chat-pdf-tab-text {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+}
+
+/* Sidebar Header */
+.chat-pdf-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fafafa;
+}
+
+.chat-pdf-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-pdf-sidebar-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.chat-pdf-platform-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+
+.chat-pdf-sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-pdf-icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.chat-pdf-icon-btn:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+/* Search Box */
+.chat-pdf-search-wrap {
+  padding: 8px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+}
+
+.chat-pdf-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.chat-pdf-search-box input {
+  width: 100%;
+  padding: 6px 28px 6px 10px;
+  font-size: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  outline: none;
+  background: #f8fafc;
+  color: #1e293b;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.chat-pdf-search-box input:focus {
+  border-color: #10a37f;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(16, 163, 127, 0.15);
+}
+
+.chat-pdf-search-clear {
+  position: absolute;
+  right: 6px;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+
+.chat-pdf-search-clear:hover {
+  color: #475569;
+}
+
+/* Smart Selection Toolbar */
+.chat-pdf-smart-toolbar {
+  padding: 10px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-pdf-smart-btn-row {
+  display: flex;
+  gap: 6px;
+}
+
+.chat-pdf-smart-btn {
+  flex: 1;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.chat-pdf-smart-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.chat-pdf-smart-btn-inverse {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.chat-pdf-smart-btn-inverse:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #1e40af;
+}
+
+.chat-pdf-smart-filters {
+  display: flex;
+  gap: 4px;
+}
+
+.chat-pdf-filter-pill {
+  flex: 1;
+  background: #f1f5f9;
+  border: 1px solid transparent;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+}
+
+.chat-pdf-filter-pill:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.chat-pdf-filter-pill.chat-pdf-active {
+  background: #10a37f;
+  color: #ffffff;
+}
+
+/* Scan Status Bar */
+.chat-pdf-scan-status-bar {
+  padding: 6px 14px;
+  background: #ecfdf5;
+  border-bottom: 1px solid #a7f3d0;
+  color: #065f46;
+  font-size: 11px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-pdf-scan-status-bar.scanning {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.chat-pdf-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(29, 78, 216, 0.25);
+  border-top-color: #1d4ed8;
+  border-radius: 50%;
+  animation: chatPdfSpin 0.75s linear infinite;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+@keyframes chatPdfSpin {
+  to { transform: rotate(360deg); }
+}
+
+.chat-pdf-scan-stop-btn {
+  background: transparent;
+  border: 1px solid #93c5fd;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.chat-pdf-scan-stop-btn:hover {
+  background: #dbeafe;
+}
+
+/* Selection Summary */
+.chat-pdf-selection-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  font-size: 11px;
+  color: #64748b;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+}
+
+.chat-pdf-selected-count-badge {
+  font-weight: 700;
+  color: #10a37f;
+}
+
+/* Prompt Index List */
+.chat-pdf-prompt-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-pdf-prompt-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-pdf-prompt-list::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.chat-pdf-prompt-list::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Prompt Card / Item */
+.chat-pdf-prompt-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.chat-pdf-prompt-item:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.chat-pdf-prompt-item.chat-pdf-turn-selected {
+  border-color: #10a37f;
+  background: rgba(16, 163, 127, 0.05);
+}
+
+.chat-pdf-prompt-item.chat-pdf-turn-selected:hover {
+  background: rgba(16, 163, 127, 0.08);
+}
+
+.chat-pdf-item-checkbox {
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+.chat-pdf-turn-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 2px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.chat-pdf-turn-selected .chat-pdf-turn-badge {
+  background: #10a37f;
+  color: #ffffff;
+}
+
+.chat-pdf-prompt-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chat-pdf-prompt-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.chat-pdf-prompt-preview {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-pdf-jump-btn {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 2px;
+  font-size: 12px;
+  opacity: 0.6;
+  transition: all 0.15s;
+}
+
+.chat-pdf-prompt-item:hover .chat-pdf-jump-btn {
+  opacity: 1;
+  color: #10a37f;
+}
+
+.chat-pdf-empty-index {
+  padding: 24px 16px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+/* Sidebar Footer */
+.chat-pdf-sidebar-footer {
+  padding: 12px 14px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-pdf-sidebar-export-btn {
+  width: 100%;
+  padding: 10px 14px;
+  background: #10a37f;
+  color: #ffffff;
+  border: 1px solid #0d8a6a;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: 0 2px 6px rgba(16, 163, 127, 0.25);
+  transition: all 0.15s ease;
+}
+
+.chat-pdf-sidebar-export-btn:hover:not(:disabled) {
+  background: #0d8a6a;
+}
+
+.chat-pdf-sidebar-export-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #94a3b8;
+  border-color: #64748b;
+  box-shadow: none;
+}
+
+/* In-Chat Pulse Jump Highlight */
+@keyframes chatPdfPulse {
+  0% {
+    outline: 4px solid #10a37f !important;
+    background-color: rgba(16, 163, 127, 0.25) !important;
+  }
+  50% {
+    outline: 4px solid #10a37f !important;
+    background-color: rgba(16, 163, 127, 0.15) !important;
+  }
+  100% {
+    outline: 2px solid transparent !important;
+    background-color: transparent !important;
+  }
+}
+
+.chat-pdf-pulse-highlight {
+  animation: chatPdfPulse 1.8s ease forwards !important;
+  border-radius: 8px;
+}
+
+/* --------------------------------------------------------------------------
+   Dark Mode Overrides for Sidebar & Index
+   -------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  #chat-pdf-sidebar {
+    background: #0f172a;
+    border-color: #1e293b;
+    color: #f1f5f9;
+    box-shadow: 4px 0 25px rgba(0, 0, 0, 0.5);
+  }
+
+  .chat-pdf-sidebar-header {
+    background: #1e293b;
+    border-color: #334155;
+  }
+
+  .chat-pdf-sidebar-title {
+    color: #f8fafc;
+  }
+
+  .chat-pdf-platform-pill {
+    background: #064e3b;
+    color: #a7f3d0;
+    border-color: #047857;
+  }
+
+  .chat-pdf-icon-btn {
+    color: #94a3b8;
+  }
+
+  .chat-pdf-icon-btn:hover {
+    background: #334155;
+    color: #f8fafc;
+  }
+
+  .chat-pdf-search-wrap {
+    background: #0f172a;
+    border-color: #1e293b;
+  }
+
+  .chat-pdf-search-box input {
+    background: #1e293b;
+    border-color: #334155;
+    color: #f8fafc;
+  }
+
+  .chat-pdf-search-box input:focus {
+    border-color: #10a37f;
+    background: #0f172a;
+  }
+
+  .chat-pdf-smart-toolbar {
+    background: #1e293b;
+    border-color: #334155;
+  }
+
+  .chat-pdf-smart-btn {
+    background: #0f172a;
+    border-color: #334155;
+    color: #cbd5e1;
+  }
+
+  .chat-pdf-smart-btn:hover {
+    background: #334155;
+    border-color: #475569;
+    color: #f8fafc;
+  }
+
+  .chat-pdf-smart-btn-inverse {
+    background: #1e3a8a;
+    border-color: #2563eb;
+    color: #bfdbfe;
+  }
+
+  .chat-pdf-smart-btn-inverse:hover {
+    background: #2563eb;
+    border-color: #3b82f6;
+    color: #ffffff;
+  }
+
+  .chat-pdf-filter-pill {
+    background: #0f172a;
+    color: #94a3b8;
+  }
+
+  .chat-pdf-filter-pill:hover {
+    background: #334155;
+    color: #f8fafc;
+  }
+
+  .chat-pdf-filter-pill.chat-pdf-active {
+    background: #10a37f;
+    color: #ffffff;
+  }
+
+  .chat-pdf-selection-summary {
+    background: #0f172a;
+    border-color: #1e293b;
+    color: #94a3b8;
+  }
+
+  .chat-pdf-prompt-list::-webkit-scrollbar-thumb {
+    background: #334155;
+  }
+
+  .chat-pdf-prompt-item {
+    background: #1e293b;
+    border-color: #334155;
+  }
+
+  .chat-pdf-prompt-item:hover {
+    background: #253347;
+    border-color: #475569;
+  }
+
+  .chat-pdf-prompt-item.chat-pdf-turn-selected {
+    border-color: #10a37f;
+    background: rgba(16, 163, 127, 0.15);
+  }
+
+  .chat-pdf-prompt-item.chat-pdf-turn-selected:hover {
+    background: rgba(16, 163, 127, 0.22);
+  }
+
+  .chat-pdf-turn-badge {
+    background: #334155;
+    color: #cbd5e1;
+  }
+
+  .chat-pdf-prompt-title {
+    color: #f8fafc;
+  }
+
+  .chat-pdf-prompt-preview {
+    color: #94a3b8;
+  }
+
+  .chat-pdf-sidebar-footer {
+    background: #0f172a;
+    border-color: #1e293b;
+  }
+}
+
+/* Also apply dark mode if page has .dark class (e.g. ChatGPT, Claude) */
+html.dark #chat-pdf-sidebar,
+body.dark #chat-pdf-sidebar,
+[data-theme="dark"] #chat-pdf-sidebar {
+  background: #0f172a;
+  border-color: #1e293b;
+  color: #f1f5f9;
+  box-shadow: 4px 0 25px rgba(0, 0, 0, 0.5);
+}
+
+html.dark .chat-pdf-sidebar-header,
+body.dark .chat-pdf-sidebar-header,
+[data-theme="dark"] .chat-pdf-sidebar-header {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+html.dark .chat-pdf-sidebar-title,
+body.dark .chat-pdf-sidebar-title,
+[data-theme="dark"] .chat-pdf-sidebar-title {
+  color: #f8fafc;
+}
+
+html.dark .chat-pdf-search-wrap,
+body.dark .chat-pdf-search-wrap,
+[data-theme="dark"] .chat-pdf-search-wrap {
+  background: #0f172a;
+  border-color: #1e293b;
+}
+
+html.dark .chat-pdf-search-box input,
+body.dark .chat-pdf-search-box input,
+[data-theme="dark"] .chat-pdf-search-box input {
+  background: #1e293b;
+  border-color: #334155;
+  color: #f8fafc;
+}
+
+html.dark .chat-pdf-smart-toolbar,
+body.dark .chat-pdf-smart-toolbar,
+[data-theme="dark"] .chat-pdf-smart-toolbar {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+html.dark .chat-pdf-smart-btn,
+body.dark .chat-pdf-smart-btn,
+[data-theme="dark"] .chat-pdf-smart-btn {
+  background: #0f172a;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+
+html.dark .chat-pdf-smart-btn-inverse,
+body.dark .chat-pdf-smart-btn-inverse,
+[data-theme="dark"] .chat-pdf-smart-btn-inverse {
+  background: #1e3a8a;
+  border-color: #2563eb;
+  color: #bfdbfe;
+}
+
+html.dark .chat-pdf-prompt-item,
+body.dark .chat-pdf-prompt-item,
+[data-theme="dark"] .chat-pdf-prompt-item {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+html.dark .chat-pdf-prompt-item:hover,
+body.dark .chat-pdf-prompt-item:hover,
+[data-theme="dark"] .chat-pdf-prompt-item:hover {
+  background: #253347;
+  border-color: #475569;
+}
+
+html.dark .chat-pdf-prompt-item.chat-pdf-turn-selected,
+body.dark .chat-pdf-prompt-item.chat-pdf-turn-selected,
+[data-theme="dark"] .chat-pdf-prompt-item.chat-pdf-turn-selected {
+  border-color: #10a37f;
+  background: rgba(16, 163, 127, 0.15);
+}
+
+html.dark .chat-pdf-prompt-title,
+body.dark .chat-pdf-prompt-title,
+[data-theme="dark"] .chat-pdf-prompt-title {
+  color: #f8fafc;
+}
+
+html.dark .chat-pdf-prompt-preview,
+body.dark .chat-pdf-prompt-preview,
+[data-theme="dark"] .chat-pdf-prompt-preview {
+  color: #94a3b8;
+}
+
+html.dark .chat-pdf-sidebar-footer,
+body.dark .chat-pdf-sidebar-footer,
+[data-theme="dark"] .chat-pdf-sidebar-footer {
+  background: #0f172a;
+  border-color: #1e293b;
+}
+

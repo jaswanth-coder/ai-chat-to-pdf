@@ -101,11 +101,18 @@ class ChatGPTAdapter extends BaseAdapter {
       contentHtml = cleanNode ? cleanNode.innerHTML : '';
     }
 
+    // Extract plain text snippet for index display
+    let text = '';
+    if (contentElement) {
+      text = (contentElement.innerText || contentElement.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+
     return {
       id,
       turnIndex,
       role,
       authorName,
+      text,
       contentElement,
       contentHtml,
       timestamp: window.ChatPdfUtils.formatDate()

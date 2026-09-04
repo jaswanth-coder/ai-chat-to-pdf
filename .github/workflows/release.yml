@@ -1,0 +1,28 @@
+name: Release Extension
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Package Extension
+        run: |
+          chmod +x package.sh
+          ./package.sh
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ai-chat-to-pdf.zip
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true

@@ -19,11 +19,20 @@ class BaseAdapter {
   }
 
   extractMessageData(element) {
+    const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
+    let contentHtml = '';
+    if (window.ChatPdfUtils && window.ChatPdfUtils.cleanCloneForPrint) {
+      const cleanNode = window.ChatPdfUtils.cleanCloneForPrint(element);
+      contentHtml = cleanNode ? cleanNode.innerHTML : '';
+    }
     return {
       id: element.dataset.chatPdfId || window.ChatPdfUtils.generateId(),
+      turnIndex: 0,
       role: 'assistant',
       authorName: 'AI',
+      text,
       contentElement: element,
+      contentHtml,
       timestamp: window.ChatPdfUtils.formatDate()
     };
   }
