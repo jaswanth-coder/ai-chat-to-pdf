@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const platformNameEl = document.getElementById('platform-name');
   const msgStatsEl = document.getElementById('msg-stats');
 
+  const btnScanAll = document.getElementById('btn-scan-all');
   const btnSelectAll = document.getElementById('btn-select-all');
   const btnClear = document.getElementById('btn-clear');
   const btnExportPdf = document.getElementById('btn-export-pdf');
@@ -24,7 +25,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (data.fontSize) settingFontSize.value = data.fontSize;
     });
 
-    // Save changes
     const saveSettings = () => {
       chrome.storage.sync.set({
         includeHeader: settingHeader.checked,
@@ -77,6 +77,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Button actions
+  if (btnScanAll) {
+    btnScanAll.addEventListener('click', () => {
+      msgStatsEl.textContent = 'Scanning full chat...';
+      chrome.tabs.sendMessage(tab.id, { action: 'SCAN_ALL' }, (res) => {
+        if (res) {
+          msgStatsEl.textContent = `${res.count} / ${res.count} selected`;
+        }
+      });
+    });
+  }
+
   btnSelectAll.addEventListener('click', () => {
     chrome.tabs.sendMessage(tab.id, { action: 'SELECT_ALL' }, (res) => {
       if (res) {
@@ -95,6 +106,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   btnExportPdf.addEventListener('click', () => {
     chrome.tabs.sendMessage(tab.id, { action: 'EXPORT_PDF' });
-    window.close(); // Close popup so print dialog is focused
+    window.close();
   });
 });

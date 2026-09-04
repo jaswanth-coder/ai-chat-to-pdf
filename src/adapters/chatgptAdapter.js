@@ -23,79 +23,91 @@ class ChatGPTAdapter extends BaseAdapter {
     return title || 'ChatGPT Conversation';
   }
 
+  /**
+   * Dual-pass turn detector: guarantees finding both user prompts AND assistant responses
+   */
   getMessageElements() {
-    // 1. ChatGPT tags every user and assistant turn with [data-message-author-role]
-    const roleElements = Array.from(document.querySelectorAll('[data-message-author-role]'));
-    if (roleElements.length > 0) {
-      return roleElements;
-    }
-
-    // 2. Fallback: conversation turns (data-testid="conversation-turn-0", etc.)
+    // 1. Primary: conversation turn containers (OpenAI standard for all turns)
     const turns = Array.from(document.querySelectorAll('div[data-testid^="conversation-turn"]'));
     if (turns.length > 0) {
       return turns;
     }
 
-    // 3. Fallback: articles + any user message wrappers
+    // 2. Secondary: collect all role containers, articles, and user message wrappers
+    const roleNodes = Array.from(document.querySelectorAll('[data-message-author-role]'));
     const articles = Array.from(document.querySelectorAll('article'));
     const userPrompts = Array.from(document.querySelectorAll('[class*="user-message"], [data-testid*="user"]'));
-    const combined = [...articles, ...userPrompts].filter((el, idx, arr) => arr.indexOf(el) === idx);
-    if (combined.length > 0) {
-      return combined;
-    }
 
-    return [];
+    const candidateSet = new Set();
+    [...turns, ...roleNodes, ...articles, ...userPrompts].forEach(el => {
+      const parentTurn = el.closest('[data-testid^="conversation-turn"]') || el.closest('article') || el;
+      candidateSet.add(parentTurn);
+    });
+
+    return Array.from(candidateSet);
   }
 
+  /**
+   * Robust turn data extractor
+   */
   extractMessageData(element) {
-    // Use stable ID based on position/testid so React re-renders don't lose selections
-    let id = element.dataset.chatPdfId;
-    if (!id) {
-      const testId = element.getAttribute('data-testid') || element.closest('[data-testid]')?.getAttribute('data-testid');
-      if (testId) {
-        id = testId;
-      } else {
-        const allRoles = Array.from(document.querySelectorAll('[data-message-author-role]'));
-        const idx = allRoles.indexOf(element);
-        id = idx !== -1 ? `turn-${idx}` : window.ChatPdfUtils.generateId('gpt');
-      }
-      element.dataset.chatPdfId = id;
+    // Extract turn index from testid if available (e.g. conversation-turn-4 -> 4)
+    const testId = element.getAttribute('data-testid') || element.closest('[data-testid]')?.getAttribute('data-testid') || '';
+    const match = testId.match(/conversation-turn-(\d+)/);
+    let turnIndex = match ? parseInt(match[1], 10) : -1;
+
+    if (turnIndex === -1) {
+      const allTurns = this.getMessageElements();
+      turnIndex = allTurns.indexOf(element);
+      if (turnIndex === -1) turnIndex = 0;
     }
 
-    // Determine role (user vs assistant)
+    const id = `turn-${turnIndex}`;
+    element.dataset.chatPdfId = id;
+
+    // Detect role (user vs assistant)
     let role = 'assistant';
     const roleAttr = element.getAttribute('data-message-author-role');
-    if (roleAttr === 'user') {
+    const userChild = element.querySelector('[data-message-author-role="user"]');
+    const assistantChild = element.querySelector('[data-message-author-role="assistant"]');
+
+    if (roleAttr === 'user' || userChild) {
       role = 'user';
-    } else if (roleAttr === 'assistant') {
+    } else if (roleAttr === 'assistant' || assistantChild) {
+      role = 'assistant';
+    } else if (element.querySelector('.markdown, .prose') && !element.querySelector('[data-message-author-role="user"]')) {
       role = 'assistant';
     } else {
-      if (element.querySelector('[data-message-author-role="user"]') ||
-          element.querySelector('[data-testid*="user"], img[alt*="User"]')) {
-        role = 'user';
-      }
+      // Even turns are user, odd turns are assistant in ChatGPT turn indexing
+      role = (turnIndex % 2 === 0) ? 'user' : 'assistant';
     }
 
     const isUser = role === 'user';
     const authorName = isUser ? 'You' : 'ChatGPT';
 
-    // Content container
-    let contentElement = null;
-    if (isUser) {
-      // For user messages, take the whole turn container so screenshots/images AND prompt text are both preserved
-      contentElement = element;
-    } else {
-      // For assistant messages, prefer .markdown or .prose container
+    // Content element
+    let contentElement = element;
+    if (!isUser) {
       contentElement = element.querySelector('.markdown') || 
                        element.querySelector('.prose') || 
+                       element.querySelector('[data-message-author-role="assistant"]') || 
                        element;
+    }
+
+    // Pre-harvest clean HTML string so it survives React DOM unmounting
+    let contentHtml = '';
+    if (window.ChatPdfUtils && window.ChatPdfUtils.cleanCloneForPrint) {
+      const cleanNode = window.ChatPdfUtils.cleanCloneForPrint(contentElement);
+      contentHtml = cleanNode ? cleanNode.innerHTML : '';
     }
 
     return {
       id,
+      turnIndex,
       role,
       authorName,
       contentElement,
+      contentHtml,
       timestamp: window.ChatPdfUtils.formatDate()
     };
   }

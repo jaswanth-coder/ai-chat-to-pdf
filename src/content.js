@@ -1,13 +1,22 @@
 /**
  * Main Content Script for AI Chat to PDF
+ * Features Continuous Message Harvester to overcome DOM virtualization (30+ messages)
+ * and Auto-Scroll Chat Scanner.
  */
 (function () {
   let adapterManager = null;
   let activeAdapter = null;
   let pdfRenderer = null;
-  let selectedMessageIds = new Set();
+
+  // In-memory persistent message store (survives React DOM unmounting)
+  const harvestedMessagesMap = new Map(); // id -> messageData
+  const selectedMessageIds = new Set();
   let isAllSelected = false;
+  let isScanning = false;
   let floatingBarEl = null;
+
+  // Safety limit to prevent browser memory exhaustion
+  const MAX_EXPORT_LIMIT = 150;
 
   // Initialize
   function init() {
@@ -23,13 +32,16 @@
     // Inject Floating UI
     createFloatingBar();
 
-    // Initial message scan & checkbox attachment
-    scanAndAttachCheckboxes();
+    // Initial message harvest & checkbox attachment
+    harvestAndAttach();
 
-    // Observe changes in chat DOM (streaming, scrolling, new messages)
+    // Continuous scroll harvester (captures messages as user scrolls up/down)
+    setupScrollHarvester();
+
+    // DOM mutation observer for live streaming & reactive updates
     setupMutationObserver();
 
-    // Listen for messages from extension popup
+    // Message listener for extension popup
     setupMessageListener();
   }
 
@@ -50,7 +62,10 @@
           <span class="chat-pdf-badge" id="chat-pdf-counter">0</span>
         </div>
         <div class="chat-pdf-btn-group">
-          <button class="chat-pdf-btn" id="chat-pdf-btn-all" title="Select all messages">Select All</button>
+          <button class="chat-pdf-btn" id="chat-pdf-btn-scan" title="Auto-scroll to load and capture the entire chat">
+            <span>🔍</span> Scan All
+          </button>
+          <button class="chat-pdf-btn" id="chat-pdf-btn-all" title="Select all captured messages">Select All</button>
           <button class="chat-pdf-btn" id="chat-pdf-btn-clear" title="Clear selection">Clear</button>
           <button class="chat-pdf-btn chat-pdf-btn-primary" id="chat-pdf-btn-export" title="Download selected as PDF">
             <span>📥</span> Download PDF
@@ -63,11 +78,13 @@
     document.body.appendChild(floatingBarEl);
 
     // Event handlers
+    const btnScan = floatingBarEl.querySelector('#chat-pdf-btn-scan');
     const btnAll = floatingBarEl.querySelector('#chat-pdf-btn-all');
     const btnClear = floatingBarEl.querySelector('#chat-pdf-btn-clear');
     const btnExport = floatingBarEl.querySelector('#chat-pdf-btn-export');
     const btnToggle = floatingBarEl.querySelector('#chat-pdf-btn-toggle');
 
+    btnScan.addEventListener('click', autoScanEntireChat);
     btnAll.addEventListener('click', () => selectAllMessages(true));
     btnClear.addEventListener('click', () => selectAllMessages(false));
     btnExport.addEventListener('click', handleExport);
@@ -82,34 +99,25 @@
   }
 
   /**
-   * Update the badge counter showing how many messages are selected
+   * Harvest messages currently in DOM and attach/update checkboxes
    */
-  function updateCounter() {
-    const counterEl = document.getElementById('chat-pdf-counter');
-    if (!counterEl) return;
-
-    if (!activeAdapter) {
-      counterEl.textContent = '0';
-      return;
-    }
-
-    const total = activeAdapter.getMessageElements().length;
-    if (isAllSelected) {
-      counterEl.textContent = `${total} (All)`;
-    } else {
-      counterEl.textContent = `${selectedMessageIds.size}`;
-    }
-  }
-
-  /**
-   * Scan messages and attach checkboxes
-   */
-  function scanAndAttachCheckboxes() {
+  function harvestAndAttach() {
     if (!activeAdapter) return;
 
     const elements = activeAdapter.getMessageElements();
     elements.forEach((element) => {
       const data = activeAdapter.extractMessageData(element);
+
+      // Save/update in persistent store
+      if (data && data.id) {
+        harvestedMessagesMap.set(data.id, data);
+      }
+
+      // If "Select All" was clicked, automatically mark new items
+      if (isAllSelected) {
+        selectedMessageIds.add(data.id);
+      }
+
       const isChecked = isAllSelected || selectedMessageIds.has(data.id);
 
       activeAdapter.attachCheckbox(element, isChecked, (checked) => {
@@ -127,31 +135,117 @@
   }
 
   /**
+   * Update the badge counter showing total harvested and selected count
+   */
+  function updateCounter() {
+    const counterEl = document.getElementById('chat-pdf-counter');
+    if (!counterEl) return;
+
+    if (isScanning) {
+      counterEl.textContent = `Scanning... (${harvestedMessagesMap.size})`;
+      return;
+    }
+
+    const totalHarvested = harvestedMessagesMap.size;
+    if (isAllSelected) {
+      counterEl.textContent = `${totalHarvested} (All)`;
+    } else {
+      counterEl.textContent = `${selectedMessageIds.size} / ${totalHarvested}`;
+    }
+  }
+
+  /**
    * Select or deselect all messages
    */
   function selectAllMessages(select) {
-    if (!activeAdapter) return;
-
     isAllSelected = select;
     selectedMessageIds.clear();
 
-    const elements = activeAdapter.getMessageElements();
-    elements.forEach((element) => {
-      const data = activeAdapter.extractMessageData(element);
-      if (select) {
-        selectedMessageIds.add(data.id);
-      }
-      activeAdapter.attachCheckbox(element, select, (checked) => {
-        if (checked) {
-          selectedMessageIds.add(data.id);
-        } else {
-          isAllSelected = false;
-          selectedMessageIds.delete(data.id);
-        }
-        updateCounter();
+    if (select) {
+      harvestedMessagesMap.forEach((_, id) => {
+        selectedMessageIds.add(id);
       });
-    });
+    }
 
+    // Update all checkboxes currently mounted in DOM
+    if (activeAdapter) {
+      const elements = activeAdapter.getMessageElements();
+      elements.forEach((element) => {
+        activeAdapter.attachCheckbox(element, select, (checked) => {
+          const data = activeAdapter.extractMessageData(element);
+          if (checked) {
+            selectedMessageIds.add(data.id);
+          } else {
+            isAllSelected = false;
+            selectedMessageIds.delete(data.id);
+          }
+          updateCounter();
+        });
+      });
+    }
+
+    updateCounter();
+  }
+
+  /**
+   * Continuous Scroll Harvester
+   * Whenever user scrolls up or down, captures newly mounted DOM messages into memory
+   */
+  function setupScrollHarvester() {
+    const debouncedHarvest = window.ChatPdfUtils.debounce(() => {
+      harvestAndAttach();
+    }, 150);
+
+    window.addEventListener('scroll', debouncedHarvest, { passive: true });
+    document.addEventListener('scroll', debouncedHarvest, { passive: true, capture: true });
+  }
+
+  /**
+   * Auto-Scan Entire Chat (smooth auto-scroll up and down)
+   * Resolves ChatGPT 30-message virtualization by loading all messages into the persistent store
+   */
+  async function autoScanEntireChat() {
+    if (isScanning) return;
+    isScanning = true;
+    updateCounter();
+
+    // Find ChatGPT's scrollable conversation container
+    const scrollContainer = document.querySelector('main div[class*="react-scroll-to-bottom"], main, [class*="overflow-y-auto"]') || document.documentElement;
+
+    const originalScrollTop = scrollContainer.scrollTop;
+
+    // 1. Scroll upward to mount and harvest older messages
+    let lastTop = -1;
+    let attempts = 0;
+    while (scrollContainer.scrollTop > 0 && attempts < 35) {
+      if (scrollContainer.scrollTop === lastTop) break;
+      lastTop = scrollContainer.scrollTop;
+      scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - 900);
+      await new Promise(r => setTimeout(r, 120));
+      harvestAndAttach();
+      attempts++;
+    }
+
+    // 2. Scroll downward to mount and harvest all responses down to the bottom
+    let lastHeight = -1;
+    attempts = 0;
+    while (attempts < 35) {
+      const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+      if (scrollContainer.scrollTop >= maxScroll - 50 && scrollContainer.scrollHeight === lastHeight) break;
+      lastHeight = scrollContainer.scrollHeight;
+      scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + 900);
+      await new Promise(r => setTimeout(r, 120));
+      harvestAndAttach();
+      attempts++;
+    }
+
+    // Final harvest pass
+    harvestAndAttach();
+
+    // Auto-select all harvested messages
+    selectAllMessages(true);
+
+    isScanning = false;
     updateCounter();
   }
 
@@ -161,41 +255,46 @@
   async function handleExport() {
     if (!activeAdapter) return;
 
-    const elements = activeAdapter.getMessageElements();
+    // Refresh currently visible DOM messages first
+    harvestAndAttach();
+
     let exportMessages = [];
 
-    // Collect messages based on selection
-    elements.forEach(element => {
-      const data = activeAdapter.extractMessageData(element);
-      const checkbox = element.querySelector('.chat-pdf-checkbox');
-      const isChecked = isAllSelected ||
-                        (checkbox && checkbox.checked) ||
-                        element.classList.contains('chat-pdf-selected') ||
-                        selectedMessageIds.has(data.id);
-
-      if (isChecked) {
-        exportMessages.push(data);
-      }
-    });
-
-    // Fallback if nothing was explicitly marked
-    if (exportMessages.length === 0) {
-      const confirmAll = confirm(`No messages individually selected. Would you like to export all ${elements.length} messages?`);
-      if (!confirmAll) return;
-
-      elements.forEach(element => {
-        exportMessages.push(activeAdapter.extractMessageData(element));
+    if (isAllSelected || selectedMessageIds.size === 0) {
+      // Export all harvested messages
+      exportMessages = Array.from(harvestedMessagesMap.values());
+    } else {
+      // Export only chosen messages
+      harvestedMessagesMap.forEach((data, id) => {
+        if (selectedMessageIds.has(id)) {
+          exportMessages.push(data);
+        }
       });
     }
 
+    // If still empty, confirm export all
     if (exportMessages.length === 0) {
-      alert('No messages found to export.');
+      const confirmAll = confirm(`Export all ${harvestedMessagesMap.size} harvested messages?`);
+      if (!confirmAll) return;
+      exportMessages = Array.from(harvestedMessagesMap.values());
+    }
+
+    if (exportMessages.length === 0) {
+      alert('No messages found. Try scrolling through the chat or clicking "Scan All" first.');
       return;
+    }
+
+    // Apply safe limit if chat is excessively long (>150 messages)
+    if (exportMessages.length > MAX_EXPORT_LIMIT) {
+      const proceed = confirm(
+        `You have ${exportMessages.length} messages selected. For best PDF rendering and performance, the top ${MAX_EXPORT_LIMIT} messages will be exported. Proceed?`
+      );
+      if (!proceed) return;
+      exportMessages = exportMessages.slice(0, MAX_EXPORT_LIMIT);
     }
 
     const title = activeAdapter.getChatTitle();
 
-    // Get settings from storage if available
     let settings = { theme: 'light', includeTimestamps: true, includeHeader: true, fontSize: 'medium' };
     if (chrome && chrome.storage && chrome.storage.sync) {
       try {
@@ -215,12 +314,12 @@
   }
 
   /**
-   * Setup MutationObserver for dynamic single-page app loading
+   * Setup MutationObserver
    */
   function setupMutationObserver() {
     const debouncedScan = window.ChatPdfUtils.debounce(() => {
-      scanAndAttachCheckboxes();
-    }, 250);
+      harvestAndAttach();
+    }, 200);
 
     const observer = new MutationObserver((mutations) => {
       let shouldScan = false;
@@ -248,26 +347,29 @@
   }
 
   /**
-   * Setup message listener for communication with popup
+   * Setup message listener for popup
    */
   function setupMessageListener() {
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
       chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.action === 'GET_STATUS') {
-          const total = activeAdapter ? activeAdapter.getMessageElements().length : 0;
           sendResponse({
             active: !!activeAdapter,
             provider: activeAdapter ? activeAdapter.name : null,
-            totalMessages: total,
-            selectedCount: isAllSelected ? total : selectedMessageIds.size
+            totalMessages: harvestedMessagesMap.size,
+            selectedCount: isAllSelected ? harvestedMessagesMap.size : selectedMessageIds.size
           });
         } else if (request.action === 'SELECT_ALL') {
           selectAllMessages(true);
-          const total = activeAdapter ? activeAdapter.getMessageElements().length : 0;
-          sendResponse({ success: true, count: total });
+          sendResponse({ success: true, count: harvestedMessagesMap.size });
         } else if (request.action === 'CLEAR_SELECTION') {
           selectAllMessages(false);
           sendResponse({ success: true, count: 0 });
+        } else if (request.action === 'SCAN_ALL') {
+          autoScanEntireChat().then(() => {
+            sendResponse({ success: true, count: harvestedMessagesMap.size });
+          });
+          return true; // async
         } else if (request.action === 'EXPORT_PDF') {
           handleExport();
           sendResponse({ success: true });

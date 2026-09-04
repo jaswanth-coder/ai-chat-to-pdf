@@ -1,7 +1,7 @@
 /**
  * PDF Renderer for AI Chats
  * Generates an isolated, beautifully formatted print document for crisp vector PDF export.
- * Includes official bundled KaTeX CSS for mathematical precision across multi-line equations and calculation steps.
+ * Includes official bundled KaTeX CSS and sorts messages by turnIndex.
  */
 class ChatPdfRenderer {
   constructor() {
@@ -13,7 +13,7 @@ class ChatPdfRenderer {
    * @param {Object} options
    * @param {string} options.title
    * @param {string} options.providerName
-   * @param {Array<Object>} options.messages - Array of { role, authorName, contentElement, timestamp }
+   * @param {Array<Object>} options.messages - Array of { id, turnIndex, role, authorName, contentElement, contentHtml, timestamp }
    * @param {Object} options.settings - Settings from extension popup or defaults
    */
   async exportToPdf({ title, providerName, messages, settings = {} }) {
@@ -21,6 +21,13 @@ class ChatPdfRenderer {
       alert('Please select at least one message to export.');
       return;
     }
+
+    // Sort messages strictly by turnIndex so chronological sequence is 100% preserved
+    const sortedMessages = [...messages].sort((a, b) => {
+      const idxA = (typeof a.turnIndex === 'number') ? a.turnIndex : 0;
+      const idxB = (typeof b.turnIndex === 'number') ? b.turnIndex : 0;
+      return idxA - idxB;
+    });
 
     const {
       theme = 'light',
@@ -48,14 +55,18 @@ class ChatPdfRenderer {
     const doc = this.iframe.contentWindow.document;
     doc.open();
 
-    const formattedMessagesHtml = messages.map((msg, index) => {
+    const formattedMessagesHtml = sortedMessages.map((msg, index) => {
       const isUser = msg.role === 'user';
       const roleClass = isUser ? 'msg-user' : 'msg-assistant';
       const roleBadgeClass = isUser ? 'badge-user' : 'badge-assistant';
       const avatarIcon = isUser ? '👤' : (providerName === 'Claude' ? '🟣' : (providerName === 'Gemini' ? '✨' : '🤖'));
       
-      const cleanContent = window.ChatPdfUtils.cleanCloneForPrint(msg.contentElement);
-      const contentHtml = cleanContent ? cleanContent.innerHTML : '';
+      // Use harvested HTML or clone live element
+      let contentHtml = msg.contentHtml;
+      if (!contentHtml && msg.contentElement) {
+        const cleanContent = window.ChatPdfUtils.cleanCloneForPrint(msg.contentElement);
+        contentHtml = cleanContent ? cleanContent.innerHTML : '';
+      }
 
       return `
         <article class="message-card ${roleClass}">
@@ -68,13 +79,13 @@ class ChatPdfRenderer {
             <span class="message-index">#${index + 1}</span>
           </div>
           <div class="message-body markdown-body">
-            ${contentHtml}
+            ${contentHtml || ''}
           </div>
         </article>
       `;
     }).join('\n');
 
-    // Bundled official KaTeX CSS (0ms latency, zero CDN dependency)
+    // Bundled official KaTeX CSS
     const embeddedKaTeXCss = window.KATEX_EMBEDDED_CSS || '';
 
     // Safe typography/code styles from host
@@ -103,7 +114,7 @@ class ChatPdfRenderer {
               <div class="chat-meta">
                 <span class="meta-tag platform-tag">${window.ChatPdfUtils.escapeHtml(providerName)}</span>
                 <span class="meta-tag date-tag">📅 ${window.ChatPdfUtils.formatDate()}</span>
-                <span class="meta-tag count-tag">💬 ${messages.length} message${messages.length === 1 ? '' : 's'}</span>
+                <span class="meta-tag count-tag">💬 ${sortedMessages.length} message${sortedMessages.length === 1 ? '' : 's'}</span>
               </div>
             </div>
           </header>
@@ -114,7 +125,7 @@ class ChatPdfRenderer {
         </main>
 
         <footer class="export-footer">
-          <span>Exported via AI Chat to PDF Extension (${messages.length} messages)</span>
+          <span>Exported via AI Chat to PDF Extension (${sortedMessages.length} messages)</span>
         </footer>
       </body>
       </html>
@@ -123,7 +134,7 @@ class ChatPdfRenderer {
     doc.write(fullHtml);
     doc.close();
 
-    // Wait for all fonts and images in iframe to fully load and settle
+    // Wait for fonts and images in iframe to fully settle
     await this._waitForReady(doc);
 
     try {
@@ -150,7 +161,6 @@ class ChatPdfRenderer {
         }
       } else if (el.tagName.toLowerCase() === 'style') {
         const text = el.textContent || '';
-        // Only include inline styles that don't clamp body overflow/height
         if (!text.includes('overflow:hidden') && !text.includes('height:100%')) {
           html += el.outerHTML + '\n';
         }
@@ -160,10 +170,9 @@ class ChatPdfRenderer {
   }
 
   /**
-   * Wait until images, KaTeX fonts, and layout reflow in iframe have settled
+   * Wait until images and KaTeX fonts have loaded
    */
   async _waitForReady(doc) {
-    // 1. Wait for web fonts (KaTeX Math, AMS, etc.)
     if (doc.fonts && doc.fonts.ready) {
       try {
         await Promise.race([
@@ -175,7 +184,6 @@ class ChatPdfRenderer {
       }
     }
 
-    // 2. Wait for images
     const images = Array.from(doc.images || []);
     if (images.length > 0) {
       const imagePromises = images.map(img => {
@@ -192,7 +200,6 @@ class ChatPdfRenderer {
       ]);
     }
 
-    // 3. Short buffer for final layout paint
     await new Promise(resolve => setTimeout(resolve, 250));
   }
 
@@ -222,7 +229,6 @@ class ChatPdfRenderer {
         print-color-adjust: exact !important;
       }
 
-      /* CRITICAL: Ensure continuous page flow across long multi-page chats */
       html, body {
         height: auto !important;
         min-height: auto !important;
@@ -283,7 +289,6 @@ class ChatPdfRenderer {
         font-weight: 600;
       }
 
-      /* Block-level thread container so pagination flows effortlessly */
       .chat-thread {
         display: block !important;
         width: 100% !important;
@@ -366,7 +371,6 @@ class ChatPdfRenderer {
         word-break: break-word;
       }
 
-      /* KaTeX Mathematical Equation Styling (Official alignment rules) */
       .katex {
         text-rendering: auto !important;
         color: #0f172a !important;
@@ -380,7 +384,6 @@ class ChatPdfRenderer {
         break-inside: avoid !important;
       }
 
-      /* Uploaded Screenshots and Images */
       .chat-pdf-attachment-image {
         margin: 10px 0;
         display: block;
@@ -403,7 +406,6 @@ class ChatPdfRenderer {
         break-inside: avoid !important;
       }
 
-      /* Code Blocks and Markdown */
       .message-body p {
         margin: 0 0 10px 0;
       }
