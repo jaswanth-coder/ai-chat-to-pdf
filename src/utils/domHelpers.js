@@ -95,8 +95,7 @@ window.ChatPdfUtils = {
         const wrapper = document.createElement('div');
         wrapper.className = 'chat-pdf-attachment-image';
         imgs.forEach(img => {
-          const clonedImg = img.cloneNode(true);
-          wrapper.appendChild(clonedImg);
+          wrapper.appendChild(img.cloneNode(true));
         });
         btn.parentNode.replaceChild(wrapper, btn);
       } else {
@@ -111,57 +110,54 @@ window.ChatPdfUtils = {
     elementsToRemove.forEach(el => el.remove());
 
     // 3. Process KaTeX math equations cleanly:
-    // Remove the redundant hidden MathML blocks so only the visually rendered KaTeX HTML is printed
+    // Remove redundant hidden MathML blocks so only visually rendered KaTeX HTML is printed
     clone.querySelectorAll('.katex-mathml').forEach(el => el.remove());
-
-    // Remove aria-hidden on .katex-html so it is treated as visible by print renderers
     clone.querySelectorAll('.katex-html').forEach(el => {
       el.removeAttribute('aria-hidden');
     });
 
-    // 4. Ensure all images and screenshots have eager loading and high quality
-    const originalImgs = element.querySelectorAll('img');
-    const clonedImgs = clone.querySelectorAll('img');
+    // 4. Ensure all images and screenshots have eager loading and high quality without canvas corruption
+    const originalImgs = Array.from(element.querySelectorAll('img'));
+    const clonedImgs = Array.from(clone.querySelectorAll('img'));
 
     clonedImgs.forEach((img, idx) => {
-      img.setAttribute('loading', 'eager');
-      img.style.maxWidth = '100%';
-      img.style.height = 'auto';
-      img.style.display = 'block';
+      // Find matching original image by src or currentSrc
+      const orig = originalImgs.find(o => (o.src && o.src === img.src) || (o.currentSrc && o.currentSrc === img.src)) || originalImgs[idx];
 
-      const orig = originalImgs[idx];
-      if (orig) {
-        if (orig.currentSrc && !img.src) {
-          img.src = orig.currentSrc;
-        }
+      // Remove avatars / decorative icons so they don't pollute content
+      const isAvatarOrIcon = img.closest('[class*="avatar" i], [class*="gizmo" i]') ||
+                             /avatar|profile|logo/i.test(img.alt || img.className || '') ||
+                             (orig && orig.naturalWidth > 0 && orig.naturalWidth <= 36 && orig.naturalHeight <= 36) ||
+                             (img.width > 0 && img.width <= 36 && img.height <= 36);
 
-        if (orig.complete && orig.naturalWidth > 0) {
-          try {
-            const canvas = document.createElement('canvas');
-            canvas.width = orig.naturalWidth;
-            canvas.height = orig.naturalHeight;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(orig, 0, 0);
-            const dataUrl = canvas.toDataURL('image/png');
-            if (dataUrl && dataUrl.length > 100) {
-              img.src = dataUrl;
-            }
-          } catch (err) {
-            // Cross-origin fallback
-          }
-        }
+      if (isAvatarOrIcon) {
+        img.remove();
+        return;
       }
 
+      if (orig && orig.currentSrc && !img.src) {
+        img.src = orig.currentSrc;
+      }
+
+      img.setAttribute('loading', 'eager');
+      img.removeAttribute('srcset');
+      img.style.maxWidth = '100%';
+      img.style.maxHeight = '520px';
+      img.style.height = 'auto';
+      img.style.width = 'auto';
+      img.style.display = 'block';
+      img.style.margin = '10px auto';
+      img.style.borderRadius = '6px';
+
       // Segregate images into dedicated figure card with clean caption
-      const isIcon = (orig && orig.naturalWidth > 0 && orig.naturalWidth <= 32);
-      if (!isIcon && !img.closest('.chat-pdf-image-figure') && !img.closest('.chat-pdf-attachment-image')) {
+      if (!img.closest('.chat-pdf-image-figure') && !img.closest('.chat-pdf-attachment-image')) {
         const figure = document.createElement('figure');
         figure.className = 'chat-pdf-image-figure';
 
         const captionText = img.alt || img.getAttribute('title') || '';
         const caption = document.createElement('figcaption');
         caption.className = 'chat-pdf-image-caption';
-        caption.textContent = captionText ? `🖼️ ${captionText}` : '🖼️ Image / Screenshot';
+        caption.textContent = captionText ? `🖼️ ${captionText}` : '🖼️ Attached Image';
 
         const parent = img.parentNode;
         if (parent) {
@@ -177,7 +173,7 @@ window.ChatPdfUtils = {
     preBlocks.forEach(pre => {
       if (pre.closest('.chat-pdf-code-container')) return;
 
-      const codeEl = pre.querySelector('code');
+      const codeEl = pre.querySelector('code') || pre;
       let lang = '';
       if (codeEl && codeEl.className) {
         const langMatch = codeEl.className.match(/(?:language-|lang-)([a-zA-Z0-9_+-]+)/i);

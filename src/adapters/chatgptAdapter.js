@@ -24,12 +24,11 @@ class ChatGPTAdapter extends BaseAdapter {
   }
 
   /**
-   * Dual-pass turn detector: guarantees finding both user prompts AND assistant responses
+   * Dual-pass turn detector: guarantees finding both user prompts AND assistant responses in DOM order
    */
   getMessageElements() {
-    // Collect all conversation turns, articles, and role nodes
     const nodes = Array.from(document.querySelectorAll(
-      '[data-testid^="conversation-turn"], article, [data-message-author-role], [class*="user-message"]'
+      '[data-testid^="conversation-turn"], article, [data-message-author-role]'
     ));
 
     const candidateSet = new Set();
@@ -50,19 +49,16 @@ class ChatGPTAdapter extends BaseAdapter {
     const match = testId.match(/conversation-turn-(\d+)/);
     let turnIndex = match ? parseInt(match[1], 10) : -1;
 
-    // Detect role (user vs assistant)
+    // Detect role (user vs assistant) strictly
     let role = 'assistant';
-    const roleAttr = element.getAttribute('data-message-author-role');
+    const roleAttr = element.getAttribute('data-message-author-role') ||
+                     element.querySelector('[data-message-author-role]')?.getAttribute('data-message-author-role');
     const userChild = element.querySelector('[data-message-author-role="user"], [class*="user-message"], [data-testid*="user"], [class*="human"]');
-    const assistantChild = element.querySelector('[data-message-author-role="assistant"]');
-    const hasUserImage = (element.querySelector('img, [class*="attachment" i], button[aria-label*="image" i]') !== null) && 
-                         !element.querySelector('.markdown, .prose, [data-message-author-role="assistant"]');
+    const assistantChild = element.querySelector('[data-message-author-role="assistant"], .markdown, .prose');
 
-    if (roleAttr === 'user' || userChild || hasUserImage) {
+    if (roleAttr === 'user' || (userChild && !assistantChild)) {
       role = 'user';
     } else if (roleAttr === 'assistant' || assistantChild) {
-      role = 'assistant';
-    } else if (element.querySelector('.markdown, .prose') && !element.querySelector('[data-message-author-role="user"]')) {
       role = 'assistant';
     } else if (turnIndex !== -1) {
       // Even turns are user, odd turns are assistant in ChatGPT turn indexing
@@ -72,12 +68,16 @@ class ChatGPTAdapter extends BaseAdapter {
     const isUser = role === 'user';
     const authorName = isUser ? 'You' : 'ChatGPT';
 
-    // Content element
+    // Content element: pick the exact message container so text, code, images, and math are all included
     let contentElement = element;
-    if (!isUser) {
-      contentElement = element.querySelector('.markdown') || 
-                       element.querySelector('.prose') || 
-                       element.querySelector('[data-message-author-role="assistant"]') || 
+    if (isUser) {
+      contentElement = element.querySelector('[data-message-author-role="user"]') ||
+                       element.querySelector('[class*="user-message"]') ||
+                       element;
+    } else {
+      contentElement = element.querySelector('[data-message-author-role="assistant"]') ||
+                       element.querySelector('.markdown') ||
+                       element.querySelector('.prose') ||
                        element;
     }
 
@@ -94,7 +94,9 @@ class ChatGPTAdapter extends BaseAdapter {
       text = (contentElement.innerText || contentElement.textContent || '').replace(/\s+/g, ' ').trim();
       const imgs = (contentElement || element).querySelectorAll('img');
       if (imgs.length > 0) {
-        const imgDetails = Array.from(imgs).map(img => img.alt || img.title || '').filter(Boolean);
+        const imgDetails = Array.from(imgs)
+          .filter(img => !/avatar|profile|logo/i.test(img.alt || img.className || '') && (img.naturalWidth > 32 || !img.naturalWidth))
+          .map(img => img.alt || img.title || '').filter(Boolean);
         const imgLabel = imgDetails.length > 0 
           ? `🖼️ [Image: ${imgDetails.join(', ').slice(0, 50)}]` 
           : `🖼️ [${imgs.length > 1 ? imgs.length + ' Images' : 'Attached Image'}]`;
@@ -102,7 +104,7 @@ class ChatGPTAdapter extends BaseAdapter {
       }
     }
 
-    // Always compute stable ID dynamically to prevent DOM recycling collisions
+    // Stable ID: strictly turn-{turnIndex} when available to guarantee deterministic numeric sorting
     let id = '';
     if (match) {
       id = `turn-${match[1]}`;
@@ -126,8 +128,9 @@ class ChatGPTAdapter extends BaseAdapter {
   }
 
   /**
-   * Fast Zero-Scroll Conversation Preloader via ChatGPT internal session API
-   * Fetches the entire conversation tree instantly without scrolling when available.
+   * Fast Zero-Scroll Conversation Retriever via ChatGPT session token
+   * Fetches the entire conversation tree instantly in 100% chronological order.
+   * Maps each message to turn-{index} so it perfectly aligns with DOM turns without collision.
    */
   async fetchConversationApi() {
     try {
@@ -162,26 +165,28 @@ class ChatGPTAdapter extends BaseAdapter {
         if (node.message && (node.message.author?.role === 'user' || node.message.author?.role === 'assistant')) {
           const parts = node.message.content?.parts || [];
           let text = '';
+          const attachments = node.message.metadata?.attachments || [];
+          let attachmentNames = attachments.map(a => a.name).filter(Boolean);
+
           parts.forEach(p => {
             if (typeof p === 'string') {
               text += p;
             } else if (p && typeof p.text === 'string') {
               text += p.text;
-            } else if (p && p.asset_pointer) {
-              text += '🖼️ [Attached Image] ';
+            } else if (p && (p.asset_pointer || p.content_type === 'image_asset_pointer')) {
+              const name = attachmentNames.shift() || 'Attached Image';
+              text += `\n🖼️ [${name}]\n`;
             }
           });
           text = text.trim();
 
           const role = node.message.author.role;
           const authorName = role === 'user' ? 'You' : 'ChatGPT';
-          const msgId = node.message.id;
 
           // Generate rich structured HTML preserving headings, lists, tables, code, and math
           const contentHtml = window.ChatPdfUtils ? window.ChatPdfUtils.formatTextToHtml(text) : '';
 
           rawList.push({
-            id: `chatgpt-${msgId}`,
             role,
             authorName,
             text,
@@ -196,12 +201,13 @@ class ChatGPTAdapter extends BaseAdapter {
       // Reverse so messages are in order from first prompt to last
       const orderedMessages = rawList.reverse();
       orderedMessages.forEach((msg, idx) => {
+        msg.id = `turn-${idx}`; // Aligns 1:1 with DOM conversation-turn-{idx}
         msg.turnIndex = idx;
       });
 
       return orderedMessages;
     } catch (e) {
-      console.warn('ChatGPT instant API preload unavailable, falling back to virtual scroll harvester.', e);
+      console.warn('ChatGPT session token retrieve unavailable, falling back to scroll scan.', e);
       return null;
     }
   }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI Chat to PDF - ChatGPT, Claude & Gemini",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Download ChatGPT, Claude, and Gemini chats into clean, formatted PDFs with right sidebar prompt index, zero-scroll instant load, faithful Markdown structure preservation, and segregated code, image, and math rendering.",
   "icons": {
     "16": "icons/icon16.png",

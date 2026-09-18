@@ -141,7 +141,7 @@
    * Ensures 100% stable chronological ordering across virtual scroll unmounting.
    */
   function updateGlobalMessageOrder(domMessageIds) {
-    if (!domMessageIds || domMessageIds.length === 0) return;
+    if (!domMessageIds) domMessageIds = [];
 
     // Filter unique IDs in current DOM order
     const uniqueBatch = [];
@@ -153,75 +153,77 @@
       }
     }
 
-    if (orderedMessageIds.length === 0) {
-      orderedMessageIds = [...uniqueBatch];
+    // 1. Check if we have numeric turn IDs (ChatGPT standard: turn-0, turn-1, etc.)
+    const allHarvestedIds = Array.from(harvestedMessagesMap.keys());
+    const hasTurnNumbers = allHarvestedIds.some(id => /turn-(\d+)/.test(id));
+
+    if (hasTurnNumbers) {
+      allHarvestedIds.sort((a, b) => {
+        const matchA = a.match(/turn-(\d+)/);
+        const matchB = b.match(/turn-(\d+)/);
+        if (matchA && matchB) {
+          return parseInt(matchA[1], 10) - parseInt(matchB[1], 10);
+        }
+        if (matchA) return -1;
+        if (matchB) return 1;
+        const msgA = harvestedMessagesMap.get(a);
+        const msgB = harvestedMessagesMap.get(b);
+        return (msgA?.turnIndex || 0) - (msgB?.turnIndex || 0);
+      });
+      orderedMessageIds = allHarvestedIds;
     } else {
-      for (let i = 0; i < uniqueBatch.length; i++) {
-        const id = uniqueBatch[i];
-        if (orderedMessageIds.includes(id)) {
-          continue;
-        }
+      // 2. Sequential merge for platforms without explicit turn numbering (Claude, Gemini)
+      if (orderedMessageIds.length === 0) {
+        orderedMessageIds = [...uniqueBatch];
+      } else if (uniqueBatch.length > 0) {
+        let firstOverlapIdxInBatch = -1;
+        let firstOverlapIdxInGlobal = -1;
 
-        // Look forward in the batch for the nearest element already in orderedMessageIds
-        let nextKnownIdx = -1;
-        for (let j = i + 1; j < uniqueBatch.length; j++) {
-          const idx = orderedMessageIds.indexOf(uniqueBatch[j]);
-          if (idx !== -1) {
-            nextKnownIdx = idx;
+        for (let i = 0; i < uniqueBatch.length; i++) {
+          const gIdx = orderedMessageIds.indexOf(uniqueBatch[i]);
+          if (gIdx !== -1) {
+            firstOverlapIdxInBatch = i;
+            firstOverlapIdxInGlobal = gIdx;
             break;
           }
         }
 
-        if (nextKnownIdx !== -1) {
-          orderedMessageIds.splice(nextKnownIdx, 0, id);
-          continue;
-        }
-
-        // Look backward in the batch for the nearest element already in orderedMessageIds
-        let prevKnownIdx = -1;
-        for (let j = i - 1; j >= 0; j--) {
-          const idx = orderedMessageIds.indexOf(uniqueBatch[j]);
-          if (idx !== -1) {
-            prevKnownIdx = idx;
-            break;
+        if (firstOverlapIdxInBatch !== -1) {
+          // Prepend any earlier items in this batch before the known global item
+          const prefixItems = uniqueBatch.slice(0, firstOverlapIdxInBatch).filter(id => !orderedMessageIds.includes(id));
+          if (prefixItems.length > 0) {
+            orderedMessageIds.splice(firstOverlapIdxInGlobal, 0, ...prefixItems);
           }
-        }
 
-        if (prevKnownIdx !== -1) {
-          orderedMessageIds.splice(prevKnownIdx + 1, 0, id);
-          continue;
-        }
-
-        // Fallback for ChatGPT numeric turn IDs (e.g. turn-2, turn-4)
-        const curMatch = id.match(/turn-(\d+)/);
-        if (curMatch) {
-          const curTurnNum = parseInt(curMatch[1], 10);
-          let inserted = false;
-          for (let k = 0; k < orderedMessageIds.length; k++) {
-            const kMatch = orderedMessageIds[k].match(/turn-(\d+)/);
-            if (kMatch && parseInt(kMatch[1], 10) > curTurnNum) {
-              orderedMessageIds.splice(k, 0, id);
-              inserted = true;
-              break;
+          // Insert items that appear after known items
+          for (let i = firstOverlapIdxInBatch + 1; i < uniqueBatch.length; i++) {
+            const curId = uniqueBatch[i];
+            if (!orderedMessageIds.includes(curId)) {
+              const prevId = uniqueBatch[i - 1];
+              const pIdx = orderedMessageIds.indexOf(prevId);
+              if (pIdx !== -1) {
+                orderedMessageIds.splice(pIdx + 1, 0, curId);
+              } else {
+                orderedMessageIds.push(curId);
+              }
             }
           }
-          if (inserted) continue;
-        }
-
-        // Non-overlapping fallback: determine position based on scroll position / direction
-        const scrollContainer = getScrollContainer();
-        const maxScroll = Math.max(1, (scrollContainer ? scrollContainer.scrollHeight - scrollContainer.clientHeight : 1));
-        const scrollRatio = scrollContainer ? (scrollContainer.scrollTop / maxScroll) : 0.5;
-
-        if (isScanningUpward || (isScrollingUp && scrollRatio < 0.65) || scrollRatio < 0.25) {
-          orderedMessageIds.unshift(id);
         } else {
-          orderedMessageIds.push(id);
+          // Disjoint batch: preserve forward direction of the batch!
+          const scrollContainer = getScrollContainer();
+          const maxScroll = Math.max(1, (scrollContainer ? scrollContainer.scrollHeight - scrollContainer.clientHeight : 1));
+          const scrollRatio = scrollContainer ? (scrollContainer.scrollTop / maxScroll) : 0.5;
+
+          if (isScanningUpward || (isScrollingUp && scrollRatio < 0.65) || scrollRatio < 0.25) {
+            orderedMessageIds = [...uniqueBatch, ...orderedMessageIds];
+          } else {
+            orderedMessageIds = [...orderedMessageIds, ...uniqueBatch];
+          }
         }
       }
     }
 
-    // Synchronize turnIndex for all harvested messages to their global sequential rank
+    // Synchronize turnIndex for all harvested messages to their global sequential rank (0, 1, 2, 3...)
     orderedMessageIds.forEach((id, index) => {
       const msg = harvestedMessagesMap.get(id);
       if (msg) {
@@ -915,10 +917,10 @@
     const originalScrollTop = scrollContainer.scrollTop;
 
     try {
-      // 0. Fast Zero-Scroll API Preloader check
+      // 0. Session token instant retrieve (zero-scroll, 100% ordered turns)
       if (activeAdapter && typeof activeAdapter.fetchConversationApi === 'function') {
         try {
-          if (bannerText) bannerText.textContent = 'Checking fast conversation API...';
+          if (bannerText) bannerText.textContent = 'Retrieving conversation from session token...';
           const apiMessages = await activeAdapter.fetchConversationApi();
           if (apiMessages && apiMessages.length > 0) {
             apiMessages.forEach(msg => {
@@ -931,13 +933,12 @@
               }
             });
 
-            // Set orderedMessageIds directly from the 100% verified chronological sequence
+            // Set orderedMessageIds directly from strictly indexed turn-0, turn-1, turn-2...
             orderedMessageIds = apiMessages.map(m => m.id);
 
-            // Enrich with any elements currently in DOM
+            // Enrich currently visible turns with live DOM elements & rendered images
             harvestAndAttach();
-
-            // Select all by default
+            updateGlobalMessageOrder();
             selectAllMessages(true);
 
             if (banner) {
@@ -945,7 +946,7 @@
               if (spinner) spinner.style.display = 'none';
               const count = getConversationTurns().length;
               if (bannerText) {
-                bannerText.textContent = `✓ Instant loaded ${count} prompts (${apiMessages.length} msgs) without scrolling!`;
+                bannerText.textContent = `✓ Retrieved all ${count} prompts (${apiMessages.length} msgs) in exact order!`;
               }
               setTimeout(() => {
                 if (!isScanning && banner) banner.style.display = 'none';
@@ -956,28 +957,27 @@
             return;
           }
         } catch (err) {
-          console.warn('API preloader bypassed, continuing with auto-scroll scan:', err);
+          console.warn('Session API retrieve bypassed, falling back to scroll scan:', err);
         }
       }
 
       // 1. Initial harvest pass
       harvestAndAttach();
 
-      const stepSize = Math.min(720, Math.max(500, Math.floor((scrollContainer.clientHeight || 750) * 0.82)));
-      const stepDelay = 125; // 125ms ensures virtual scroll renders reliably across all hardware
-
-      // 2. Scroll upward to mount and harvest older messages up to top
+      // 2. Scroll upward to mount and harvest older messages up to the very top
       isScanningUpward = true;
       let lastTop = -1;
       let attempts = 0;
       const maxUpwardAttempts = 120;
+      const stepUpSize = Math.max(700, Math.floor((scrollContainer.clientHeight || 750) * 1.0));
+      const stepUpDelay = 85;
 
       while (scrollContainer.scrollTop > 5 && attempts < maxUpwardAttempts) {
         if (stopScanRequested) break;
         if (scrollContainer.scrollTop === lastTop) break;
         lastTop = scrollContainer.scrollTop;
-        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - stepSize);
-        await new Promise(r => setTimeout(r, stepDelay));
+        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - stepUpSize);
+        await new Promise(r => setTimeout(r, stepUpDelay));
         harvestAndAttach();
 
         if (bannerText) {
@@ -987,12 +987,14 @@
       }
       isScanningUpward = false;
 
-      // 3. Scroll downward from top to bottom
+      // 3. Scroll downward from top to bottom at controlled slower pace so all DOM turns mount
       let prevScrollTop = -1;
       let prevHeight = -1;
       let noProgressCount = 0;
       attempts = 0;
       const maxDownwardAttempts = 160;
+      const stepDownSize = Math.max(650, Math.floor((scrollContainer.clientHeight || 750) * 0.9));
+      const stepDownDelay = 115; // Controlled slower scroll from top to bottom as requested
 
       while (attempts < maxDownwardAttempts) {
         if (stopScanRequested) break;
@@ -1002,10 +1004,10 @@
 
         if (atBottom && scrollContainer.scrollHeight === prevHeight) {
           noProgressCount++;
-          if (noProgressCount >= 3) break; // Reached end of thread
+          if (noProgressCount >= 2) break; // Reached end of thread
         } else if (scrollContainer.scrollTop === prevScrollTop && scrollContainer.scrollHeight === prevHeight) {
           noProgressCount++;
-          if (noProgressCount >= 3) break;
+          if (noProgressCount >= 2) break;
         } else {
           noProgressCount = 0;
         }
@@ -1013,8 +1015,8 @@
         prevScrollTop = scrollContainer.scrollTop;
         prevHeight = scrollContainer.scrollHeight;
 
-        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + stepSize);
-        await new Promise(r => setTimeout(r, stepDelay));
+        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + stepDownSize);
+        await new Promise(r => setTimeout(r, stepDownDelay));
         harvestAndAttach();
 
         if (bannerText) {
@@ -1025,6 +1027,7 @@
 
       // Final harvest pass
       harvestAndAttach();
+      updateGlobalMessageOrder();
 
       // Select all by default after scan
       selectAllMessages(true);
@@ -1039,10 +1042,10 @@
         if (bannerText) {
           bannerText.textContent = stopScanRequested ? `Scan stopped — ${count} prompts indexed` : `✓ Scan complete — ${count} prompts indexed`;
         }
-        // Auto-fade banner after 4 seconds
+        // Auto-fade banner after 3.5 seconds
         setTimeout(() => {
           if (!isScanning && banner) banner.style.display = 'none';
-        }, 4000);
+        }, 3500);
       }
     } catch (err) {
       console.error('Chat auto-scan error:', err);
@@ -1070,6 +1073,7 @@
       }
 
       harvestAndAttach();
+      updateGlobalMessageOrder();
 
       // Gather all messages in strict chronological order according to global sequence tracker
       const allOrderedMessages = orderedMessageIds
