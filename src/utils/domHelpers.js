@@ -278,15 +278,45 @@ window.ChatPdfUtils = {
   /**
    * Convert plain text or markdown snippet to clean segregated HTML (for API preloaded messages)
    */
-  formatTextToHtml(text) {
-    if (!text) return '';
+  /**
+   * Convert plain text or markdown snippet to clean segregated HTML (for API preloaded messages)
+   * Preserves headings, lists, bold, italics, tables, math, and code blocks with full structure.
+   */
+  formatTextToHtml(md) {
+    if (!md) return '';
 
-    // Handle code blocks: ```lang ... ```
-    const codeBlockRegex = /```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g;
-    let html = text.replace(codeBlockRegex, (match, lang, code) => {
-      const displayLang = (lang || 'CODE').toUpperCase();
+    // Normalize newlines
+    let text = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    // Inline formatting helper
+    const inlineFormat = (str) => {
+      if (!str) return '';
+      return str
+        // Inline math: $math$ or \(math\)
+        .replace(/(?:\$([^\$\n]+)\$|\\\(([^\)\n]+)\\\))/g, '<span class="katex"><span class="katex-html">$1$2</span></span>')
+        // Inline code: `code`
+        .replace(/`([^`]+)`/g, '<code class="chat-pdf-inline-code">$1</code>')
+        // Images: ![alt](url)
+        .replace(/!\[(.*?)\]\((.*?)\)/g, '<figure class="chat-pdf-image-figure"><img src="$2" alt="$1" /><figcaption class="chat-pdf-image-caption">🖼️ $1</figcaption></figure>')
+        // Links: [text](url)
+        .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" style="color:#2563eb;">$1</a>')
+        // Bold + Italic: ***text*** or ___text___
+        .replace(/(\*\*\*|___)(.*?)\1/g, '<strong><em>$2</em></strong>')
+        // Bold: **text** or __text__
+        .replace(/(\*\*|__)(.*?)\1/g, '<strong>$2</strong>')
+        // Italic: *text* or _text_
+        .replace(/(\*|_)(.*?)\1/g, '<em>$2</em>')
+        // Strikethrough: ~~text~~
+        .replace(/~~(.*?)~~/g, '<del>$1</del>');
+    };
+
+    // 1. Extract and stash Code Blocks
+    const codeBlocks = [];
+    text = text.replace(/```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+      const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
+      const displayLang = (lang || 'code').trim().toUpperCase();
       const escapedCode = this.escapeHtml(code.trim());
-      return `
+      codeBlocks.push(`
         <div class="chat-pdf-code-container">
           <div class="chat-pdf-code-header">
             <span class="chat-pdf-code-badge">
@@ -296,21 +326,179 @@ window.ChatPdfUtils = {
           </div>
           <pre class="chat-pdf-pre"><code>${escapedCode}</code></pre>
         </div>
-      `;
+      `);
+      return placeholder;
     });
 
-    // Handle paragraph splits
-    const parts = html.split(/\n\n+/);
-    return parts.map(part => {
-      const trimmed = part.trim();
-      if (!trimmed) return '';
-      if (trimmed.startsWith('<div class="chat-pdf-code-container"')) return trimmed;
+    // 2. Extract and stash LaTeX Display Math blocks ($$ ... $$ or \[ ... \])
+    const mathBlocks = [];
+    text = text.replace(/(?:\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\])/g, (match, m1, m2) => {
+      const placeholder = `__MATH_BLOCK_${mathBlocks.length}__`;
+      const mathContent = (m1 || m2 || '').trim();
+      const escapedMath = this.escapeHtml(mathContent);
+      mathBlocks.push(`
+        <div class="chat-pdf-math-container">
+          <div class="chat-pdf-math-label"><span>📐</span> Mathematical Formula</div>
+          <div class="katex-display"><span class="katex"><span class="katex-html">${escapedMath}</span></span></div>
+        </div>
+      `);
+      return placeholder;
+    });
 
-      // Escape text and handle inline code
-      let formatted = this.escapeHtml(trimmed);
-      formatted = formatted.replace(/`([^`]+)`/g, '<code class="chat-pdf-inline-code">$1</code>');
-      formatted = formatted.replace(/\n/g, '<br/>');
-      return `<p>${formatted}</p>`;
-    }).join('\n');
+    // 3. Extract and stash Tables
+    const tableBlocks = [];
+    text = text.replace(/(?:(?:^[ \t]*\|[^\n]+\|[ \t]*(?:\n|$))+)/gm, (match) => {
+      const lines = match.trim().split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length < 2) return match;
+
+      const isSep = (line) => /^\|(?:\s*:?-+:?\s*\|)+$/.test(line);
+      let headerLine = null;
+      let bodyLines = [];
+
+      if (lines.length >= 2 && isSep(lines[1])) {
+        headerLine = lines[0];
+        bodyLines = lines.slice(2);
+      } else {
+        bodyLines = lines;
+      }
+
+      const parseRow = (line) => {
+        const raw = line.split('|');
+        return raw.slice(1, raw.length - 1).map(c => c.trim());
+      };
+
+      let tableHtml = '<div class="chat-pdf-table-container"><table>';
+      if (headerLine) {
+        tableHtml += '<thead><tr>';
+        parseRow(headerLine).forEach(h => {
+          tableHtml += `<th>${inlineFormat(this.escapeHtml(h))}</th>`;
+        });
+        tableHtml += '</tr></thead>';
+      }
+      tableHtml += '<tbody>';
+      bodyLines.forEach(row => {
+        if (isSep(row)) return;
+        tableHtml += '<tr>';
+        parseRow(row).forEach(c => {
+          tableHtml += `<td>${inlineFormat(this.escapeHtml(c))}</td>`;
+        });
+        tableHtml += '</tr>';
+      });
+      tableHtml += '</tbody></table></div>';
+
+      const placeholder = `__TABLE_BLOCK_${tableBlocks.length}__`;
+      tableBlocks.push(tableHtml);
+      return placeholder;
+    });
+
+    // 4. Line-by-line block parser
+    const rawLines = text.split('\n');
+    const outputBlocks = [];
+    let inList = null; // 'ul' or 'ol'
+    let inBlockquote = false;
+    let bqBuffer = [];
+
+    const flushBlockquote = () => {
+      if (inBlockquote) {
+        outputBlocks.push(`<blockquote>${bqBuffer.join('<br/>')}</blockquote>`);
+        inBlockquote = false;
+        bqBuffer = [];
+      }
+    };
+
+    const flushList = () => {
+      if (inList) {
+        outputBlocks.push(`</${inList}>`);
+        inList = null;
+      }
+    };
+
+    for (let i = 0; i < rawLines.length; i++) {
+      const line = rawLines[i];
+      const trimmed = line.trim();
+
+      // Check placeholder blocks
+      if (trimmed.startsWith('__CODE_BLOCK_') || trimmed.startsWith('__MATH_BLOCK_') || trimmed.startsWith('__TABLE_BLOCK_')) {
+        flushBlockquote();
+        flushList();
+        outputBlocks.push(trimmed);
+        continue;
+      }
+
+      if (!trimmed) {
+        flushBlockquote();
+        flushList();
+        continue;
+      }
+
+      // Horizontal Rule: --- or ***
+      if (/^(?:---|\*\*\*|___)$/.test(trimmed)) {
+        flushBlockquote();
+        flushList();
+        outputBlocks.push('<hr style="border:0; border-top:1px solid #e2e8f0; margin:16px 0;" />');
+        continue;
+      }
+
+      // Blockquote: > text
+      if (trimmed.startsWith('>')) {
+        flushList();
+        inBlockquote = true;
+        bqBuffer.push(inlineFormat(this.escapeHtml(trimmed.replace(/^>\s*/, ''))));
+        continue;
+      } else {
+        flushBlockquote();
+      }
+
+      // Headings: #, ##, ###, ####, #####, ######
+      const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+      if (headingMatch) {
+        flushList();
+        const level = headingMatch[1].length;
+        outputBlocks.push(`<h${level}>${inlineFormat(this.escapeHtml(headingMatch[2]))}</h${level}>`);
+        continue;
+      }
+
+      // Lists: - item or * item or 1. item
+      const bulletMatch = line.match(/^(\s*)(?:[-*+]|\d+\.)\s+(.*)$/);
+      if (bulletMatch) {
+        const isNum = /^\d+\./.test(trimmed);
+        const listType = isNum ? 'ol' : 'ul';
+
+        if (inList !== listType) {
+          flushList();
+          inList = listType;
+          outputBlocks.push(`<${inList}>`);
+        }
+        outputBlocks.push(`<li>${inlineFormat(this.escapeHtml(bulletMatch[2]))}</li>`);
+        continue;
+      } else {
+        flushList();
+      }
+
+      // Paragraph
+      outputBlocks.push(`<p>${inlineFormat(this.escapeHtml(trimmed))}</p>`);
+    }
+
+    flushBlockquote();
+    flushList();
+
+    let finalHtml = outputBlocks.join('\n');
+
+    // Restore Code Blocks
+    codeBlocks.forEach((cb, idx) => {
+      finalHtml = finalHtml.replace(`__CODE_BLOCK_${idx}__`, cb);
+    });
+
+    // Restore Math Blocks
+    mathBlocks.forEach((mb, idx) => {
+      finalHtml = finalHtml.replace(`__MATH_BLOCK_${idx}__`, mb);
+    });
+
+    // Restore Tables
+    tableBlocks.forEach((tb, idx) => {
+      finalHtml = finalHtml.replace(`__TABLE_BLOCK_${idx}__`, tb);
+    });
+
+    return finalHtml;
   }
 };

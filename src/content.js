@@ -927,6 +927,7 @@
               } else {
                 const existing = harvestedMessagesMap.get(msg.id);
                 if (!existing.text && msg.text) existing.text = msg.text;
+                if (!existing.contentHtml && msg.contentHtml) existing.contentHtml = msg.contentHtml;
               }
             });
 

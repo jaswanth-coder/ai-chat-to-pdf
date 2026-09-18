@@ -171,11 +171,14 @@ class ChatGPTAdapter extends BaseAdapter {
               text += '🖼️ [Attached Image] ';
             }
           });
-          text = text.replace(/\s+/g, ' ').trim();
+          text = text.trim();
 
           const role = node.message.author.role;
           const authorName = role === 'user' ? 'You' : 'ChatGPT';
           const msgId = node.message.id;
+
+          // Generate rich structured HTML preserving headings, lists, tables, code, and math
+          const contentHtml = window.ChatPdfUtils ? window.ChatPdfUtils.formatTextToHtml(text) : '';
 
           rawList.push({
             id: `chatgpt-${msgId}`,
@@ -183,7 +186,7 @@ class ChatGPTAdapter extends BaseAdapter {
             authorName,
             text,
             contentElement: null,
-            contentHtml: '',
+            contentHtml,
             timestamp: node.message.create_time ? new Date(node.message.create_time * 1000).toLocaleString() : (window.ChatPdfUtils ? window.ChatPdfUtils.formatDate() : '')
           });
         }
