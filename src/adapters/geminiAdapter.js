@@ -69,11 +69,8 @@ class GeminiAdapter extends BaseAdapter {
       }
     }
 
-    let id = element.dataset.chatPdfId;
-    if (!id) {
-      id = window.ChatPdfUtils ? window.ChatPdfUtils.getStableId(element, 'gemini', role, text) : `gemini-${Date.now()}`;
-      element.dataset.chatPdfId = id;
-    }
+    const id = window.ChatPdfUtils ? window.ChatPdfUtils.getStableId(element, 'gemini', role, text) : `gemini-${Date.now()}`;
+    element.dataset.chatPdfId = id;
 
     return {
       id,

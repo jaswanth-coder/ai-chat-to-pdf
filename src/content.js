@@ -14,7 +14,10 @@
   let orderedMessageIds = []; // strictly ordered list of message IDs representing entire conversation
   let isAllSelected = false;
   let isScanning = false;
+  let isScanningUpward = false;
   let stopScanRequested = false;
+  let lastObservedScrollTop = 0;
+  let isScrollingUp = false;
 
   // UI Element references
   let floatingBarEl = null;
@@ -205,8 +208,16 @@
           if (inserted) continue;
         }
 
-        // Default append
-        orderedMessageIds.push(id);
+        // Non-overlapping fallback: determine position based on scroll position / direction
+        const scrollContainer = getScrollContainer();
+        const maxScroll = Math.max(1, (scrollContainer ? scrollContainer.scrollHeight - scrollContainer.clientHeight : 1));
+        const scrollRatio = scrollContainer ? (scrollContainer.scrollTop / maxScroll) : 0.5;
+
+        if (isScanningUpward || (isScrollingUp && scrollRatio < 0.65) || scrollRatio < 0.25) {
+          orderedMessageIds.unshift(id);
+        } else {
+          orderedMessageIds.push(id);
+        }
       }
     }
 
@@ -855,10 +866,27 @@
   function setupScrollHarvester() {
     const debouncedHarvest = window.ChatPdfUtils.debounce(() => {
       harvestAndAttach();
-    }, 120);
+    }, 75);
 
-    window.addEventListener('scroll', debouncedHarvest, { passive: true });
-    document.addEventListener('scroll', debouncedHarvest, { passive: true, capture: true });
+    const onScroll = () => {
+      const container = getScrollContainer();
+      const curTop = container ? container.scrollTop : window.scrollY;
+      if (curTop < lastObservedScrollTop - 15) {
+        isScrollingUp = true;
+      } else if (curTop > lastObservedScrollTop + 15) {
+        isScrollingUp = false;
+      }
+      lastObservedScrollTop = curTop;
+      debouncedHarvest();
+    };
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    document.addEventListener('scroll', onScroll, { passive: true, capture: true });
+
+    const container = getScrollContainer();
+    if (container && container !== window && container !== document) {
+      container.addEventListener('scroll', onScroll, { passive: true });
+    }
   }
 
   /**
@@ -890,21 +918,21 @@
       // 1. Initial harvest pass
       harvestAndAttach();
 
-      // Dynamic large step size: scans ~1.5 screenfuls per step
-      const stepSize = Math.max(1400, Math.floor((scrollContainer.clientHeight || 800) * 1.5));
-      const stepDelay = 55; // Fast, responsive 55ms delay per step
+      const stepSize = Math.min(720, Math.max(500, Math.floor((scrollContainer.clientHeight || 750) * 0.82)));
+      const stepDelay = 125; // 125ms ensures virtual scroll renders reliably across all hardware
 
       // 2. Scroll upward to mount and harvest older messages up to top
+      isScanningUpward = true;
       let lastTop = -1;
       let attempts = 0;
-      const maxUpwardAttempts = 60;
+      const maxUpwardAttempts = 120;
 
       while (scrollContainer.scrollTop > 5 && attempts < maxUpwardAttempts) {
         if (stopScanRequested) break;
         if (scrollContainer.scrollTop === lastTop) break;
         lastTop = scrollContainer.scrollTop;
-        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - 950);
-        await new Promise(r => setTimeout(r, 85));
+        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - stepSize);
+        await new Promise(r => setTimeout(r, stepDelay));
         harvestAndAttach();
 
         if (bannerText) {
@@ -912,13 +940,14 @@
         }
         attempts++;
       }
+      isScanningUpward = false;
 
       // 3. Scroll downward from top to bottom
       let prevScrollTop = -1;
       let prevHeight = -1;
       let noProgressCount = 0;
       attempts = 0;
-      const maxDownwardAttempts = 100;
+      const maxDownwardAttempts = 160;
 
       while (attempts < maxDownwardAttempts) {
         if (stopScanRequested) break;
@@ -928,10 +957,10 @@
 
         if (atBottom && scrollContainer.scrollHeight === prevHeight) {
           noProgressCount++;
-          if (noProgressCount >= 2) break; // Reached end of thread
+          if (noProgressCount >= 3) break; // Reached end of thread
         } else if (scrollContainer.scrollTop === prevScrollTop && scrollContainer.scrollHeight === prevHeight) {
           noProgressCount++;
-          if (noProgressCount >= 2) break;
+          if (noProgressCount >= 3) break;
         } else {
           noProgressCount = 0;
         }
@@ -939,8 +968,8 @@
         prevScrollTop = scrollContainer.scrollTop;
         prevHeight = scrollContainer.scrollHeight;
 
-        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + 950);
-        await new Promise(r => setTimeout(r, 85));
+        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + stepSize);
+        await new Promise(r => setTimeout(r, stepDelay));
         harvestAndAttach();
 
         if (bannerText) {
@@ -974,6 +1003,7 @@
       console.error('Chat auto-scan error:', err);
     } finally {
       isScanning = false;
+      isScanningUpward = false;
       stopScanRequested = false;
       updateUI();
     }
@@ -1111,14 +1141,24 @@
     });
   }
 
+  function getConversationKey(url) {
+    try {
+      const u = new URL(url);
+      return u.origin + u.pathname;
+    } catch (e) {
+      return (url || '').split('?')[0].split('#')[0];
+    }
+  }
+
   /**
    * Watch for SPA conversation URL changes (ChatGPT, Claude, Gemini)
    */
   function setupUrlWatcher() {
-    let lastUrl = window.location.href;
+    let lastKey = getConversationKey(window.location.href);
     setInterval(() => {
-      if (window.location.href !== lastUrl) {
-        lastUrl = window.location.href;
+      const currentKey = getConversationKey(window.location.href);
+      if (currentKey !== lastKey) {
+        lastKey = currentKey;
         // Clean reset for new conversation
         harvestedMessagesMap.clear();
         orderedMessageIds = [];

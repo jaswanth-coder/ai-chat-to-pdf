@@ -102,16 +102,16 @@ class ChatGPTAdapter extends BaseAdapter {
       }
     }
 
-    // Stable ID to survive virtual scroll DOM recycling
-    let id = element.dataset.chatPdfId;
-    if (!id) {
-      if (match) {
-        id = `turn-${match[1]}`;
-      } else {
-        id = window.ChatPdfUtils ? window.ChatPdfUtils.getStableId(element, 'chatgpt', role, text) : `turn-${Date.now()}`;
-      }
-      element.dataset.chatPdfId = id;
+    // Always compute stable ID dynamically to prevent DOM recycling collisions
+    let id = '';
+    if (match) {
+      id = `turn-${match[1]}`;
+    } else if (window.ChatPdfUtils) {
+      id = window.ChatPdfUtils.getStableId(element, 'chatgpt', role, text);
+    } else {
+      id = `turn-${Date.now()}`;
     }
+    element.dataset.chatPdfId = id;
 
     return {
       id,

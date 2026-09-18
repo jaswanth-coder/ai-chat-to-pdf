@@ -89,6 +89,15 @@ class BaseAdapter {
         } else {
           element.classList.remove('chat-pdf-selected');
         }
+        checkbox.onchange = (e) => {
+          e.stopPropagation();
+          if (checkbox.checked) {
+            element.classList.add('chat-pdf-selected');
+          } else {
+            element.classList.remove('chat-pdf-selected');
+          }
+          onChange(checkbox.checked);
+        };
       }
     }
   }

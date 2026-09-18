@@ -29,48 +29,55 @@ window.ChatPdfUtils = {
    * to survive DOM recycling / virtual scroll unmounting.
    */
   getStableId(element, prefix = 'chat', role = '', text = '') {
-    if (element && element.dataset && element.dataset.chatPdfId) {
-      return element.dataset.chatPdfId;
-    }
+    let stableId = '';
 
     if (element) {
-      // 1. Check data-message-id
+      // 1. Check data-message-id (OpenAI / Claude permanent message UUID)
       const msgId = element.getAttribute('data-message-id') || 
                     element.querySelector('[data-message-id]')?.getAttribute('data-message-id');
       if (msgId) {
-        return `${prefix}-${msgId}`;
+        stableId = `${prefix}-${msgId}`;
       }
 
       // 2. Check conversation-turn-X in data-testid
-      const testId = element.getAttribute('data-testid') || 
-                     element.closest('[data-testid]')?.getAttribute('data-testid');
-      if (testId) {
-        const match = testId.match(/conversation-turn-(\d+)/);
-        if (match) {
-          return `turn-${match[1]}`;
+      if (!stableId) {
+        const testId = element.getAttribute('data-testid') || 
+                       element.closest('[data-testid]')?.getAttribute('data-testid');
+        if (testId) {
+          const match = testId.match(/conversation-turn-(\d+)/);
+          if (match) {
+            stableId = `turn-${match[1]}`;
+          }
         }
       }
     }
 
     // 3. Content hash fallback (includes image alt/src signatures to distinguish image prompts)
-    const cleanText = (text || '').trim().replace(/\s+/g, ' ');
-    const imgSignatures = element ? Array.from(element.querySelectorAll('img'))
-      .map(img => (img.alt || img.getAttribute('src') || '').slice(0, 80))
-      .filter(Boolean)
-      .join('|') : '';
+    if (!stableId) {
+      const cleanText = (text || '').trim().replace(/\s+/g, ' ');
+      const imgSignatures = element ? Array.from(element.querySelectorAll('img'))
+        .map(img => (img.alt || img.getAttribute('src') || '').slice(0, 80))
+        .filter(Boolean)
+        .join('|') : '';
 
-    const fingerprint = cleanText + (imgSignatures ? `::img:${imgSignatures}` : '');
-    if (!fingerprint) {
-      return `${prefix}-${role}-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 6)}`;
+      const fingerprint = cleanText + (imgSignatures ? `::img:${imgSignatures}` : '');
+      if (!fingerprint) {
+        stableId = `${prefix}-${role}-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 6)}`;
+      } else {
+        let hash = 0;
+        for (let i = 0; i < fingerprint.length; i++) {
+          hash = ((hash << 5) - hash) + fingerprint.charCodeAt(i);
+          hash |= 0;
+        }
+        const sample = cleanText.slice(0, 16).replace(/[^a-zA-Z0-9]/g, '') || (imgSignatures ? 'img' : 'msg');
+        stableId = `${prefix}-${role}-${Math.abs(hash).toString(36)}${sample ? '-' + sample : ''}`;
+      }
     }
 
-    let hash = 0;
-    for (let i = 0; i < fingerprint.length; i++) {
-      hash = ((hash << 5) - hash) + fingerprint.charCodeAt(i);
-      hash |= 0;
+    if (element && element.dataset) {
+      element.dataset.chatPdfId = stableId;
     }
-    const sample = cleanText.slice(0, 16).replace(/[^a-zA-Z0-9]/g, '') || (imgSignatures ? 'img' : 'msg');
-    return `${prefix}-${role}-${Math.abs(hash).toString(36)}${sample ? '-' + sample : ''}`;
+    return stableId;
   },
 
   /**
