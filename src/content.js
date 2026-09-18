@@ -11,6 +11,7 @@
   // In-memory persistent message store (survives React DOM unmounting)
   const harvestedMessagesMap = new Map(); // id -> messageData
   const selectedMessageIds = new Set();
+  let orderedMessageIds = []; // strictly ordered list of message IDs representing entire conversation
   let isAllSelected = false;
   let isScanning = false;
   let stopScanRequested = false;
@@ -25,8 +26,8 @@
   let searchQuery = '';
   let activeFilterMode = 'all'; // 'all' | 'prompts' | 'answers'
 
-  // Safety limit to prevent browser memory exhaustion
-  const MAX_EXPORT_LIMIT = 150;
+  // Safety limit to prevent browser memory exhaustion (increased from 150)
+  const MAX_EXPORT_LIMIT = 1000;
 
   // Initialize
   function init() {
@@ -136,15 +137,109 @@
   }
 
   /**
-   * Group harvested messages into Prompt Turns
+   * Stitches newly observed DOM message IDs into the global ordered list
+   * Ensures 100% stable chronological ordering across virtual scroll unmounting.
+   */
+  function updateGlobalMessageOrder(domMessageIds) {
+    if (!domMessageIds || domMessageIds.length === 0) return;
+
+    // Filter unique IDs in current DOM order
+    const uniqueBatch = [];
+    const seen = new Set();
+    for (const id of domMessageIds) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        uniqueBatch.push(id);
+      }
+    }
+
+    if (orderedMessageIds.length === 0) {
+      orderedMessageIds = [...uniqueBatch];
+    } else {
+      for (let i = 0; i < uniqueBatch.length; i++) {
+        const id = uniqueBatch[i];
+        if (orderedMessageIds.includes(id)) {
+          continue;
+        }
+
+        // Look forward in the batch for the nearest element already in orderedMessageIds
+        let nextKnownIdx = -1;
+        for (let j = i + 1; j < uniqueBatch.length; j++) {
+          const idx = orderedMessageIds.indexOf(uniqueBatch[j]);
+          if (idx !== -1) {
+            nextKnownIdx = idx;
+            break;
+          }
+        }
+
+        if (nextKnownIdx !== -1) {
+          orderedMessageIds.splice(nextKnownIdx, 0, id);
+          continue;
+        }
+
+        // Look backward in the batch for the nearest element already in orderedMessageIds
+        let prevKnownIdx = -1;
+        for (let j = i - 1; j >= 0; j--) {
+          const idx = orderedMessageIds.indexOf(uniqueBatch[j]);
+          if (idx !== -1) {
+            prevKnownIdx = idx;
+            break;
+          }
+        }
+
+        if (prevKnownIdx !== -1) {
+          orderedMessageIds.splice(prevKnownIdx + 1, 0, id);
+          continue;
+        }
+
+        // Fallback for ChatGPT numeric turn IDs (e.g. turn-2, turn-4)
+        const curMatch = id.match(/turn-(\d+)/);
+        if (curMatch) {
+          const curTurnNum = parseInt(curMatch[1], 10);
+          let inserted = false;
+          for (let k = 0; k < orderedMessageIds.length; k++) {
+            const kMatch = orderedMessageIds[k].match(/turn-(\d+)/);
+            if (kMatch && parseInt(kMatch[1], 10) > curTurnNum) {
+              orderedMessageIds.splice(k, 0, id);
+              inserted = true;
+              break;
+            }
+          }
+          if (inserted) continue;
+        }
+
+        // Default append
+        orderedMessageIds.push(id);
+      }
+    }
+
+    // Synchronize turnIndex for all harvested messages to their global sequential rank
+    orderedMessageIds.forEach((id, index) => {
+      const msg = harvestedMessagesMap.get(id);
+      if (msg) {
+        msg.turnIndex = index;
+      }
+    });
+  }
+
+  /**
+   * Group harvested messages into Prompt Turns strictly in chronological order
    * Each turn contains: { id, number, turnIndex, prompt, responses: [] }
    */
   function getConversationTurns() {
-    const sorted = Array.from(harvestedMessagesMap.values()).sort((a, b) => {
-      const idxA = (typeof a.turnIndex === 'number') ? a.turnIndex : 0;
-      const idxB = (typeof b.turnIndex === 'number') ? b.turnIndex : 0;
-      return idxA - idxB;
-    });
+    // 1. Build sorted array strictly from the global sequence tracker
+    const sorted = orderedMessageIds
+      .map(id => harvestedMessagesMap.get(id))
+      .filter(Boolean);
+
+    // 2. Append any harvested messages not yet tracked in orderedMessageIds
+    if (sorted.length < harvestedMessagesMap.size) {
+      harvestedMessagesMap.forEach((msg, id) => {
+        if (!orderedMessageIds.includes(id)) {
+          sorted.push(msg);
+        }
+      });
+    }
 
     const turns = [];
     let currentTurn = null;
@@ -447,13 +542,22 @@
     if (!activeAdapter) return;
 
     const elements = activeAdapter.getMessageElements();
+    const currentDomIds = [];
+
     elements.forEach((element) => {
       const data = activeAdapter.extractMessageData(element);
+      if (!data || !data.id) return;
+
+      currentDomIds.push(data.id);
+
+      // Preserve previously harvested clean contentHtml if element is unmounting
+      const existing = harvestedMessagesMap.get(data.id);
+      if (existing && !data.contentHtml && existing.contentHtml) {
+        data.contentHtml = existing.contentHtml;
+      }
 
       // Save/update in persistent store
-      if (data && data.id) {
-        harvestedMessagesMap.set(data.id, data);
-      }
+      harvestedMessagesMap.set(data.id, data);
 
       // If "Select All" was previously clicked, mark newly discovered items
       if (isAllSelected) {
@@ -472,6 +576,9 @@
         updateUI();
       });
     });
+
+    // Merge observed DOM order into global chronological sequence
+    updateGlobalMessageOrder(currentDomIds);
 
     updateUI();
   }
@@ -832,16 +939,16 @@
       // 1. Initial harvest pass
       harvestAndAttach();
 
-      // 2. Scroll upward to mount and harvest older messages
+      // 2. Scroll upward to mount and harvest older messages up to top
       let lastTop = -1;
       let attempts = 0;
-      const maxAttempts = 35;
+      const maxAttempts = 150;
 
       while (scrollContainer.scrollTop > 10 && attempts < maxAttempts) {
         if (stopScanRequested) break;
         if (scrollContainer.scrollTop === lastTop) break;
         lastTop = scrollContainer.scrollTop;
-        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - 950);
+        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - 850);
         await new Promise(r => setTimeout(r, 110));
         harvestAndAttach();
 
@@ -861,7 +968,7 @@
           break;
         }
         lastHeight = scrollContainer.scrollHeight;
-        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + 950);
+        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + 850);
         await new Promise(r => setTimeout(r, 110));
         harvestAndAttach();
 
@@ -911,22 +1018,32 @@
 
     harvestAndAttach();
 
+    // Gather all messages in strict chronological order according to global sequence tracker
+    const allOrderedMessages = orderedMessageIds
+      .map(id => harvestedMessagesMap.get(id))
+      .filter(Boolean);
+
+    // Fallback: append any harvested messages not yet tracked in orderedMessageIds
+    if (allOrderedMessages.length < harvestedMessagesMap.size) {
+      harvestedMessagesMap.forEach((msg, id) => {
+        if (!orderedMessageIds.includes(id)) {
+          allOrderedMessages.push(msg);
+        }
+      });
+    }
+
     let exportMessages = [];
 
     if (isAllSelected || selectedMessageIds.size === 0) {
-      exportMessages = Array.from(harvestedMessagesMap.values());
+      exportMessages = [...allOrderedMessages];
     } else {
-      harvestedMessagesMap.forEach((data, id) => {
-        if (selectedMessageIds.has(id)) {
-          exportMessages.push(data);
-        }
-      });
+      exportMessages = allOrderedMessages.filter(msg => selectedMessageIds.has(msg.id));
     }
 
     if (exportMessages.length === 0) {
       const confirmAll = confirm(`Export all ${harvestedMessagesMap.size} messages?`);
       if (!confirmAll) return;
-      exportMessages = Array.from(harvestedMessagesMap.values());
+      exportMessages = [...allOrderedMessages];
     }
 
     if (exportMessages.length === 0) {
@@ -934,9 +1051,16 @@
       return;
     }
 
+    // Always sort strictly by turnIndex so chronological order is 100% preserved
+    exportMessages.sort((a, b) => {
+      const idxA = (typeof a.turnIndex === 'number') ? a.turnIndex : 0;
+      const idxB = (typeof b.turnIndex === 'number') ? b.turnIndex : 0;
+      return idxA - idxB;
+    });
+
     if (exportMessages.length > MAX_EXPORT_LIMIT) {
       const proceed = confirm(
-        `You have ${exportMessages.length} messages selected. For best PDF rendering and performance, the top ${MAX_EXPORT_LIMIT} messages will be exported. Proceed?`
+        `You have ${exportMessages.length} messages selected (limit is ${MAX_EXPORT_LIMIT}). For optimal browser performance and PDF rendering, the first ${MAX_EXPORT_LIMIT} messages will be exported in chronological order. Proceed?`
       );
       if (!proceed) return;
       exportMessages = exportMessages.slice(0, MAX_EXPORT_LIMIT);
@@ -1011,6 +1135,7 @@
         lastUrl = window.location.href;
         // Clean reset for new conversation
         harvestedMessagesMap.clear();
+        orderedMessageIds = [];
         selectedMessageIds.clear();
         isAllSelected = false;
         updateUI();

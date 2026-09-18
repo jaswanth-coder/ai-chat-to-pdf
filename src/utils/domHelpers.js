@@ -25,6 +25,45 @@ window.ChatPdfUtils = {
   },
 
   /**
+   * Generates or retrieves a deterministic stable ID for a message element
+   * to survive DOM recycling / virtual scroll unmounting.
+   */
+  getStableId(element, prefix = 'chat', role = '', text = '') {
+    if (element && element.dataset && element.dataset.chatPdfId) {
+      return element.dataset.chatPdfId;
+    }
+
+    if (element) {
+      // 1. Check data-message-id
+      const msgId = element.getAttribute('data-message-id') || 
+                    element.querySelector('[data-message-id]')?.getAttribute('data-message-id');
+      if (msgId) {
+        return `${prefix}-${msgId}`;
+      }
+
+      // 2. Check conversation-turn-X in data-testid
+      const testId = element.getAttribute('data-testid') || 
+                     element.closest('[data-testid]')?.getAttribute('data-testid');
+      if (testId) {
+        const match = testId.match(/conversation-turn-(\d+)/);
+        if (match) {
+          return `turn-${match[1]}`;
+        }
+      }
+    }
+
+    // 3. Content hash fallback
+    const cleanText = (text || '').trim().replace(/\s+/g, ' ');
+    let hash = 0;
+    for (let i = 0; i < cleanText.length; i++) {
+      hash = ((hash << 5) - hash) + cleanText.charCodeAt(i);
+      hash |= 0;
+    }
+    const sample = cleanText.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '');
+    return `${prefix}-${role}-${Math.abs(hash).toString(36)}${sample ? '-' + sample : ''}`;
+  },
+
+  /**
    * Deep clone a DOM node, preserving images/screenshots and equations cleanly
    */
   cleanCloneForPrint(element) {

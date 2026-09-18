@@ -29,16 +29,10 @@ class GeminiAdapter extends BaseAdapter {
     if (turns.length === 0) {
       turns = Array.from(document.querySelectorAll('message-content, .message-content'));
     }
-    return turns;
+    return turns.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
   }
 
   extractMessageData(element) {
-    let id = element.dataset.chatPdfId;
-    if (!id) {
-      id = window.ChatPdfUtils.generateId('gemini');
-      element.dataset.chatPdfId = id;
-    }
-
     const tagName = element.tagName.toLowerCase();
     const isUser = tagName === 'user-query' ||
                    element.classList.contains('query-container') ||
@@ -53,9 +47,6 @@ class GeminiAdapter extends BaseAdapter {
                            element.querySelector('message-content') ||
                            element;
 
-    const allTurns = this.getMessageElements();
-    const turnIndex = allTurns.indexOf(element);
-
     let contentHtml = '';
     if (window.ChatPdfUtils && window.ChatPdfUtils.cleanCloneForPrint) {
       const cleanNode = window.ChatPdfUtils.cleanCloneForPrint(contentElement);
@@ -67,15 +58,21 @@ class GeminiAdapter extends BaseAdapter {
       text = (contentElement.innerText || contentElement.textContent || '').replace(/\s+/g, ' ').trim();
     }
 
+    let id = element.dataset.chatPdfId;
+    if (!id) {
+      id = window.ChatPdfUtils ? window.ChatPdfUtils.getStableId(element, 'gemini', role, text) : `gemini-${Date.now()}`;
+      element.dataset.chatPdfId = id;
+    }
+
     return {
       id,
-      turnIndex: turnIndex >= 0 ? turnIndex : 0,
+      turnIndex: 0,
       role,
       authorName,
       text,
       contentElement,
       contentHtml,
-      timestamp: window.ChatPdfUtils.formatDate()
+      timestamp: window.ChatPdfUtils ? window.ChatPdfUtils.formatDate() : new Date().toLocaleDateString()
     };
   }
 }

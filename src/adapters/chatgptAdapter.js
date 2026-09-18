@@ -30,7 +30,7 @@ class ChatGPTAdapter extends BaseAdapter {
     // 1. Primary: conversation turn containers (OpenAI standard for all turns)
     const turns = Array.from(document.querySelectorAll('div[data-testid^="conversation-turn"]'));
     if (turns.length > 0) {
-      return turns;
+      return turns.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
     }
 
     // 2. Secondary: collect all role containers, articles, and user message wrappers
@@ -44,7 +44,7 @@ class ChatGPTAdapter extends BaseAdapter {
       candidateSet.add(parentTurn);
     });
 
-    return Array.from(candidateSet);
+    return Array.from(candidateSet).sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
   }
 
   /**
@@ -55,15 +55,6 @@ class ChatGPTAdapter extends BaseAdapter {
     const testId = element.getAttribute('data-testid') || element.closest('[data-testid]')?.getAttribute('data-testid') || '';
     const match = testId.match(/conversation-turn-(\d+)/);
     let turnIndex = match ? parseInt(match[1], 10) : -1;
-
-    if (turnIndex === -1) {
-      const allTurns = this.getMessageElements();
-      turnIndex = allTurns.indexOf(element);
-      if (turnIndex === -1) turnIndex = 0;
-    }
-
-    const id = `turn-${turnIndex}`;
-    element.dataset.chatPdfId = id;
 
     // Detect role (user vs assistant)
     let role = 'assistant';
@@ -77,7 +68,7 @@ class ChatGPTAdapter extends BaseAdapter {
       role = 'assistant';
     } else if (element.querySelector('.markdown, .prose') && !element.querySelector('[data-message-author-role="user"]')) {
       role = 'assistant';
-    } else {
+    } else if (turnIndex !== -1) {
       // Even turns are user, odd turns are assistant in ChatGPT turn indexing
       role = (turnIndex % 2 === 0) ? 'user' : 'assistant';
     }
@@ -107,15 +98,26 @@ class ChatGPTAdapter extends BaseAdapter {
       text = (contentElement.innerText || contentElement.textContent || '').replace(/\s+/g, ' ').trim();
     }
 
+    // Stable ID to survive virtual scroll DOM recycling
+    let id = element.dataset.chatPdfId;
+    if (!id) {
+      if (match) {
+        id = `turn-${match[1]}`;
+      } else {
+        id = window.ChatPdfUtils ? window.ChatPdfUtils.getStableId(element, 'chatgpt', role, text) : `turn-${Date.now()}`;
+      }
+      element.dataset.chatPdfId = id;
+    }
+
     return {
       id,
-      turnIndex,
+      turnIndex: turnIndex >= 0 ? turnIndex : 0,
       role,
       authorName,
       text,
       contentElement,
       contentHtml,
-      timestamp: window.ChatPdfUtils.formatDate()
+      timestamp: window.ChatPdfUtils ? window.ChatPdfUtils.formatDate() : new Date().toLocaleDateString()
     };
   }
 }
