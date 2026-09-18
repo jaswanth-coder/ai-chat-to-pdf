@@ -562,6 +562,7 @@
     let html = '';
     filteredTurns.forEach((turn) => {
       const status = getTurnSelectionStatus(turn);
+      const isSelected = status === 'full' || status === 'partial';
       const hasImage = turn.prompt.contentHtml && turn.prompt.contentHtml.includes('<img');
       const promptFull = turn.prompt.text || (hasImage ? '🖼️ [Attached Image]' : 'Untitled Prompt');
       const promptSnippet = promptFull.length > 85 ? promptFull.slice(0, 85) + '...' : promptFull;
