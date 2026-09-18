@@ -63,11 +63,14 @@ class ChatPdfRenderer {
       const roleBadgeClass = isUser ? 'badge-user' : 'badge-assistant';
       const avatarIcon = isUser ? '👤' : (providerName === 'Claude' ? '🟣' : (providerName === 'Gemini' ? '✨' : '🤖'));
       
-      // Use harvested HTML or clone live element
+      // Use harvested HTML, live element clone, or formatted text fallback
       let contentHtml = msg.contentHtml;
       if (!contentHtml && msg.contentElement) {
         const cleanContent = window.ChatPdfUtils.cleanCloneForPrint(msg.contentElement);
         contentHtml = cleanContent ? cleanContent.innerHTML : '';
+      }
+      if (!contentHtml && msg.text && window.ChatPdfUtils && window.ChatPdfUtils.formatTextToHtml) {
+        contentHtml = window.ChatPdfUtils.formatTextToHtml(msg.text);
       }
 
       return `
@@ -373,63 +376,158 @@ class ChatPdfRenderer {
         word-break: break-word;
       }
 
+      /* Mathematical Formulas & KaTeX */
+      .chat-pdf-math-container {
+        margin: 14px 0;
+        padding: 12px 18px;
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-left: 4px solid #7c3aed;
+        border-radius: 8px;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+
+      .chat-pdf-math-label {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: #7c3aed;
+        margin-bottom: 6px;
+      }
+
       .katex {
         text-rendering: auto !important;
         color: #0f172a !important;
+        font-size: 1.05em !important;
       }
 
       .katex-display {
         display: block !important;
-        margin: 1.2em 0 !important;
+        margin: 0.6em 0 !important;
         text-align: center !important;
         page-break-inside: avoid !important;
         break-inside: avoid !important;
+        overflow-x: auto;
       }
 
-      .chat-pdf-attachment-image {
-        margin: 10px 0;
-        display: block;
+      /* Images (Generated DALL-E, Screenshots, Attachments) */
+      .chat-pdf-image-figure {
+        margin: 16px auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 10px;
+        max-width: 96%;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
         page-break-inside: avoid !important;
         break-inside: avoid !important;
       }
 
+      .chat-pdf-image-figure img,
       .chat-pdf-attachment-image img,
       .message-body img {
         max-width: 100%;
-        max-height: 480px;
+        max-height: 520px;
         width: auto;
         height: auto;
-        border-radius: 8px;
-        border: 1px solid #cbd5e1;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        border-radius: 6px;
         display: block;
-        margin: 8px 0;
+        margin: 0 auto;
+        object-fit: contain;
         page-break-inside: avoid !important;
         break-inside: avoid !important;
       }
 
-      .message-body p {
-        margin: 0 0 10px 0;
+      .chat-pdf-image-caption {
+        font-size: 11px;
+        font-weight: 500;
+        color: #64748b;
+        margin-top: 8px;
+        text-align: center;
+        font-style: italic;
       }
 
-      .message-body p:last-child {
-        margin-bottom: 0;
+      .chat-pdf-attachment-image {
+        margin: 12px 0;
+        display: block;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+
+      /* Code Blocks & Syntax Segregation */
+      .chat-pdf-code-container {
+        margin: 14px 0;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background-color: #0f172a;
+        overflow: hidden;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12);
+      }
+
+      .chat-pdf-code-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background-color: #1e293b;
+        padding: 6px 14px;
+        border-bottom: 1px solid #334155;
+        user-select: none;
+      }
+
+      .chat-pdf-code-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        font-weight: 700;
+        color: #94a3b8;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: 0.5px;
+      }
+
+      .chat-pdf-code-lang {
+        color: #38bdf8;
+      }
+
+      .chat-pdf-code-container pre {
+        margin: 0 !important;
+        border-radius: 0 !important;
+        border: 0 !important;
+        padding: 14px 16px !important;
+        background: transparent !important;
+        color: #f8fafc !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-break: break-word;
+        overflow-wrap: break-word;
       }
 
       .message-body pre {
         background-color: #0f172a !important;
         color: #f8fafc !important;
         padding: 12px 14px;
-        border-radius: 6px;
+        border-radius: 8px;
+        border: 1px solid #334155;
         overflow-x: auto;
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-size: 12px;
-        line-height: 1.5;
-        margin: 10px 0;
+        line-height: 1.55;
+        margin: 12px 0;
         page-break-inside: avoid !important;
         break-inside: avoid !important;
         white-space: pre-wrap;
-        word-break: break-all;
+        word-break: break-word;
+        overflow-wrap: break-word;
       }
 
       .message-body code {
@@ -440,29 +538,63 @@ class ChatPdfRenderer {
       .message-body :not(pre) > code {
         background-color: #f1f5f9;
         color: #0f172a;
-        padding: 2px 5px;
+        padding: 2px 6px;
         border-radius: 4px;
         border: 1px solid #e2e8f0;
       }
 
+      /* Tables Segregation */
+      .chat-pdf-table-container {
+        margin: 14px 0;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        overflow: hidden;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      }
+
+      .chat-pdf-table-container table,
       .message-body table {
         border-collapse: collapse;
         width: 100%;
-        margin: 12px 0;
-        page-break-inside: avoid !important;
-        break-inside: avoid !important;
+        margin: 0 !important;
+        font-size: 12px;
       }
 
       .message-body th, .message-body td {
         border: 1px solid #cbd5e1;
-        padding: 6px 10px;
+        padding: 8px 12px;
         text-align: left;
         font-size: 12px;
       }
 
       .message-body th {
         background-color: #f1f5f9;
+        color: #0f172a;
         font-weight: 600;
+      }
+
+      .message-body tr:nth-child(even) td {
+        background-color: #f8fafc;
+      }
+
+      /* Typography & Blockquotes */
+      .message-body h1, .message-body h2, .message-body h3, .message-body h4 {
+        color: #0f172a;
+        margin: 14px 0 8px 0;
+        font-weight: 700;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+      }
+
+      .message-body p {
+        margin: 0 0 10px 0;
+        line-height: 1.62;
+      }
+
+      .message-body p:last-child {
+        margin-bottom: 0;
       }
 
       .message-body ul, .message-body ol {
@@ -475,10 +607,12 @@ class ChatPdfRenderer {
       }
 
       .message-body blockquote {
-        border-left: 3px solid #cbd5e1;
-        margin: 8px 0;
-        padding-left: 12px;
-        color: #475569;
+        border-left: 4px solid #3b82f6;
+        background-color: #f8fafc;
+        margin: 10px 0;
+        padding: 8px 14px;
+        border-radius: 0 6px 6px 0;
+        color: #334155;
         font-style: italic;
       }
 

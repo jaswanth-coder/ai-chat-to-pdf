@@ -124,6 +124,84 @@ class ChatGPTAdapter extends BaseAdapter {
       timestamp: window.ChatPdfUtils ? window.ChatPdfUtils.formatDate() : new Date().toLocaleDateString()
     };
   }
+
+  /**
+   * Fast Zero-Scroll Conversation Preloader via ChatGPT internal session API
+   * Fetches the entire conversation tree instantly without scrolling when available.
+   */
+  async fetchConversationApi() {
+    try {
+      const match = window.location.pathname.match(/\/c\/([a-f0-9-]+)/i);
+      if (!match) return null;
+      const conversationId = match[1];
+
+      // 1. Get current session access token
+      const sessionRes = await fetch('/api/auth/session', { credentials: 'include' });
+      if (!sessionRes.ok) return null;
+      const sessionData = await sessionRes.json();
+      const accessToken = sessionData?.accessToken;
+      if (!accessToken) return null;
+
+      // 2. Fetch full conversation tree
+      const convRes = await fetch(`/backend-api/conversation/${conversationId}`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include'
+      });
+      if (!convRes.ok) return null;
+      const convData = await convRes.json();
+      if (!convData || !convData.mapping || !convData.current_node) return null;
+
+      // 3. Traverse mapping from current_node backwards to root to preserve 100% chronological order
+      const rawList = [];
+      let curr = convData.current_node;
+      while (curr && convData.mapping[curr]) {
+        const node = convData.mapping[curr];
+        if (node.message && (node.message.author?.role === 'user' || node.message.author?.role === 'assistant')) {
+          const parts = node.message.content?.parts || [];
+          let text = '';
+          parts.forEach(p => {
+            if (typeof p === 'string') {
+              text += p;
+            } else if (p && typeof p.text === 'string') {
+              text += p.text;
+            } else if (p && p.asset_pointer) {
+              text += '🖼️ [Attached Image] ';
+            }
+          });
+          text = text.replace(/\s+/g, ' ').trim();
+
+          const role = node.message.author.role;
+          const authorName = role === 'user' ? 'You' : 'ChatGPT';
+          const msgId = node.message.id;
+
+          rawList.push({
+            id: `chatgpt-${msgId}`,
+            role,
+            authorName,
+            text,
+            contentElement: null,
+            contentHtml: '',
+            timestamp: node.message.create_time ? new Date(node.message.create_time * 1000).toLocaleString() : (window.ChatPdfUtils ? window.ChatPdfUtils.formatDate() : '')
+          });
+        }
+        curr = node.parent;
+      }
+
+      // Reverse so messages are in order from first prompt to last
+      const orderedMessages = rawList.reverse();
+      orderedMessages.forEach((msg, idx) => {
+        msg.turnIndex = idx;
+      });
+
+      return orderedMessages;
+    } catch (e) {
+      console.warn('ChatGPT instant API preload unavailable, falling back to virtual scroll harvester.', e);
+      return null;
+    }
+  }
 }
 
 window.ChatGPTAdapter = ChatGPTAdapter;

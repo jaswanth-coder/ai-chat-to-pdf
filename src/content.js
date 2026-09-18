@@ -915,6 +915,50 @@
     const originalScrollTop = scrollContainer.scrollTop;
 
     try {
+      // 0. Fast Zero-Scroll API Preloader check
+      if (activeAdapter && typeof activeAdapter.fetchConversationApi === 'function') {
+        try {
+          if (bannerText) bannerText.textContent = 'Checking fast conversation API...';
+          const apiMessages = await activeAdapter.fetchConversationApi();
+          if (apiMessages && apiMessages.length > 0) {
+            apiMessages.forEach(msg => {
+              if (!harvestedMessagesMap.has(msg.id)) {
+                harvestedMessagesMap.set(msg.id, msg);
+              } else {
+                const existing = harvestedMessagesMap.get(msg.id);
+                if (!existing.text && msg.text) existing.text = msg.text;
+              }
+            });
+
+            // Set orderedMessageIds directly from the 100% verified chronological sequence
+            orderedMessageIds = apiMessages.map(m => m.id);
+
+            // Enrich with any elements currently in DOM
+            harvestAndAttach();
+
+            // Select all by default
+            selectAllMessages(true);
+
+            if (banner) {
+              banner.className = 'chat-pdf-scan-status-bar';
+              if (spinner) spinner.style.display = 'none';
+              const count = getConversationTurns().length;
+              if (bannerText) {
+                bannerText.textContent = `✓ Instant loaded ${count} prompts (${apiMessages.length} msgs) without scrolling!`;
+              }
+              setTimeout(() => {
+                if (!isScanning && banner) banner.style.display = 'none';
+              }, 3500);
+            }
+            isScanning = false;
+            updateUI();
+            return;
+          }
+        } catch (err) {
+          console.warn('API preloader bypassed, continuing with auto-scroll scan:', err);
+        }
+      }
+
       // 1. Initial harvest pass
       harvestAndAttach();
 

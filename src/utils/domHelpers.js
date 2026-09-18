@@ -151,6 +151,102 @@ window.ChatPdfUtils = {
           }
         }
       }
+
+      // Segregate images into dedicated figure card with clean caption
+      const isIcon = (orig && orig.naturalWidth > 0 && orig.naturalWidth <= 32);
+      if (!isIcon && !img.closest('.chat-pdf-image-figure') && !img.closest('.chat-pdf-attachment-image')) {
+        const figure = document.createElement('figure');
+        figure.className = 'chat-pdf-image-figure';
+
+        const captionText = img.alt || img.getAttribute('title') || '';
+        const caption = document.createElement('figcaption');
+        caption.className = 'chat-pdf-image-caption';
+        caption.textContent = captionText ? `🖼️ ${captionText}` : '🖼️ Image / Screenshot';
+
+        const parent = img.parentNode;
+        if (parent) {
+          parent.insertBefore(figure, img);
+          figure.appendChild(img);
+          figure.appendChild(caption);
+        }
+      }
+    });
+
+    // 5. Segregate Code Blocks with dedicated language header badge
+    const preBlocks = clone.querySelectorAll('pre');
+    preBlocks.forEach(pre => {
+      if (pre.closest('.chat-pdf-code-container')) return;
+
+      const codeEl = pre.querySelector('code');
+      let lang = '';
+      if (codeEl && codeEl.className) {
+        const langMatch = codeEl.className.match(/(?:language-|lang-)([a-zA-Z0-9_+-]+)/i);
+        if (langMatch) lang = langMatch[1];
+      }
+
+      if (!lang) {
+        const prevSibling = pre.previousElementSibling;
+        if (prevSibling) {
+          const text = (prevSibling.textContent || '').trim().toLowerCase();
+          if (text && text.length <= 20 && !text.includes('\n') && !text.includes('copy')) {
+            lang = text;
+          }
+        }
+      }
+
+      const container = document.createElement('div');
+      container.className = 'chat-pdf-code-container';
+
+      const header = document.createElement('div');
+      header.className = 'chat-pdf-code-header';
+      header.innerHTML = `
+        <span class="chat-pdf-code-badge">
+          <span class="chat-pdf-code-icon">💻</span>
+          <span class="chat-pdf-code-lang">${(lang || 'CODE').toUpperCase()}</span>
+        </span>
+      `;
+
+      const parent = pre.parentNode;
+      if (parent) {
+        parent.insertBefore(container, pre);
+        container.appendChild(header);
+        container.appendChild(pre);
+      }
+    });
+
+    // 6. Segregate Display Math & KaTeX equations
+    const mathBlocks = clone.querySelectorAll('.katex-display');
+    mathBlocks.forEach(mathEl => {
+      if (mathEl.closest('.chat-pdf-math-container')) return;
+
+      const mathCard = document.createElement('div');
+      mathCard.className = 'chat-pdf-math-container';
+
+      const label = document.createElement('div');
+      label.className = 'chat-pdf-math-label';
+      label.innerHTML = '<span>📐</span> Mathematical Formula';
+
+      const parent = mathEl.parentNode;
+      if (parent) {
+        parent.insertBefore(mathCard, mathEl);
+        mathCard.appendChild(label);
+        mathCard.appendChild(mathEl);
+      }
+    });
+
+    // 7. Segregate Tables with crisp borders and scroll wrapper
+    const tables = clone.querySelectorAll('table');
+    tables.forEach(table => {
+      if (table.closest('.chat-pdf-table-container')) return;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'chat-pdf-table-container';
+
+      const parent = table.parentNode;
+      if (parent) {
+        parent.insertBefore(wrap, table);
+        wrap.appendChild(table);
+      }
     });
 
     return clone;
@@ -177,5 +273,44 @@ window.ChatPdfUtils = {
       hour: '2-digit',
       minute: '2-digit'
     });
+  },
+
+  /**
+   * Convert plain text or markdown snippet to clean segregated HTML (for API preloaded messages)
+   */
+  formatTextToHtml(text) {
+    if (!text) return '';
+
+    // Handle code blocks: ```lang ... ```
+    const codeBlockRegex = /```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g;
+    let html = text.replace(codeBlockRegex, (match, lang, code) => {
+      const displayLang = (lang || 'CODE').toUpperCase();
+      const escapedCode = this.escapeHtml(code.trim());
+      return `
+        <div class="chat-pdf-code-container">
+          <div class="chat-pdf-code-header">
+            <span class="chat-pdf-code-badge">
+              <span class="chat-pdf-code-icon">💻</span>
+              <span class="chat-pdf-code-lang">${displayLang}</span>
+            </span>
+          </div>
+          <pre class="chat-pdf-pre"><code>${escapedCode}</code></pre>
+        </div>
+      `;
+    });
+
+    // Handle paragraph splits
+    const parts = html.split(/\n\n+/);
+    return parts.map(part => {
+      const trimmed = part.trim();
+      if (!trimmed) return '';
+      if (trimmed.startsWith('<div class="chat-pdf-code-container"')) return trimmed;
+
+      // Escape text and handle inline code
+      let formatted = this.escapeHtml(trimmed);
+      formatted = formatted.replace(/`([^`]+)`/g, '<code class="chat-pdf-inline-code">$1</code>');
+      formatted = formatted.replace(/\n/g, '<br/>');
+      return `<p>${formatted}</p>`;
+    }).join('\n');
   }
 };
