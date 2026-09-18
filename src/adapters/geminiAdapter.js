@@ -36,12 +36,15 @@ class GeminiAdapter extends BaseAdapter {
     const tagName = element.tagName.toLowerCase();
     const isUser = tagName === 'user-query' ||
                    element.classList.contains('query-container') ||
-                   element.querySelector('.user-query') !== null;
+                   element.querySelector('.user-query') !== null ||
+                   element.querySelector('.query-content') !== null ||
+                   element.querySelector('user-query') !== null;
 
     const role = isUser ? 'user' : 'assistant';
     const authorName = isUser ? 'You' : 'Gemini';
 
     const contentElement = element.querySelector('.query-text') ||
+                           element.querySelector('.query-content') ||
                            element.querySelector('.model-response-text') ||
                            element.querySelector('.markdown') ||
                            element.querySelector('message-content') ||
@@ -56,6 +59,14 @@ class GeminiAdapter extends BaseAdapter {
     let text = '';
     if (contentElement) {
       text = (contentElement.innerText || contentElement.textContent || '').replace(/\s+/g, ' ').trim();
+      const imgs = (contentElement || element).querySelectorAll('img');
+      if (imgs.length > 0) {
+        const imgDetails = Array.from(imgs).map(img => img.alt || img.title || '').filter(Boolean);
+        const imgLabel = imgDetails.length > 0 
+          ? `🖼️ [Image: ${imgDetails.join(', ').slice(0, 50)}]` 
+          : `🖼️ [${imgs.length > 1 ? imgs.length + ' Images' : 'Attached Image'}]`;
+        text = text ? `${imgLabel} ${text}` : imgLabel;
+      }
     }
 
     let id = element.dataset.chatPdfId;

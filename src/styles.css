@@ -102,6 +102,7 @@ model-response:hover .chat-pdf-select-container,
    Floating Control Bar
    -------------------------------------------------------------------------- */
 #chat-pdf-floating-bar {
+  display: none !important;
   position: fixed;
   bottom: 24px;
   right: 24px;
@@ -111,7 +112,6 @@ model-response:hover .chat-pdf-select-container,
   border-radius: 12px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
@@ -240,18 +240,18 @@ model-response:hover .chat-pdf-select-container,
 }
 
 /* --------------------------------------------------------------------------
-   Left Sidebar - Prompt Index & Smart Selection
+   Right Sidebar - Prompt Index & Smart Selection
    -------------------------------------------------------------------------- */
 #chat-pdf-sidebar {
   position: fixed;
   top: 0;
-  left: 0;
+  right: 0;
   bottom: 0;
   width: 340px;
   max-width: 90vw;
   background: #ffffff;
-  border-right: 1px solid #e2e8f0;
-  box-shadow: 4px 0 25px rgba(0, 0, 0, 0.12);
+  border-left: 1px solid #e2e8f0;
+  box-shadow: -4px 0 25px rgba(0, 0, 0, 0.12);
   z-index: 999998;
   display: flex;
   flex-direction: column;
@@ -262,21 +262,21 @@ model-response:hover .chat-pdf-select-container,
 }
 
 #chat-pdf-sidebar.chat-pdf-collapsed {
-  transform: translateX(-100%);
+  transform: translateX(100%);
 }
 
-/* Left edge floating tab when collapsed */
+/* Right edge floating tab when collapsed */
 #chat-pdf-sidebar-toggle-tab {
   position: fixed;
   top: 48%;
-  left: 0;
+  right: 0;
   transform: translateY(-50%);
   z-index: 999997;
   background: #10a37f;
   color: #ffffff;
   padding: 10px 8px;
-  border-radius: 0 8px 8px 0;
-  box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.2);
+  border-radius: 8px 0 0 8px;
+  box-shadow: -2px 2px 10px rgba(0, 0, 0, 0.2);
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -291,7 +291,7 @@ model-response:hover .chat-pdf-select-container,
 
 #chat-pdf-sidebar-toggle-tab:hover {
   background: #0d8a6a;
-  transform: translateY(-50%) translateX(2px);
+  transform: translateY(-50%) translateX(-2px);
 }
 
 #chat-pdf-sidebar-toggle-tab.chat-pdf-hidden {

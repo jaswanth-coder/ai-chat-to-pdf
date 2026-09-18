@@ -52,14 +52,24 @@ window.ChatPdfUtils = {
       }
     }
 
-    // 3. Content hash fallback
+    // 3. Content hash fallback (includes image alt/src signatures to distinguish image prompts)
     const cleanText = (text || '').trim().replace(/\s+/g, ' ');
+    const imgSignatures = element ? Array.from(element.querySelectorAll('img'))
+      .map(img => (img.alt || img.getAttribute('src') || '').slice(0, 80))
+      .filter(Boolean)
+      .join('|') : '';
+
+    const fingerprint = cleanText + (imgSignatures ? `::img:${imgSignatures}` : '');
+    if (!fingerprint) {
+      return `${prefix}-${role}-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 6)}`;
+    }
+
     let hash = 0;
-    for (let i = 0; i < cleanText.length; i++) {
-      hash = ((hash << 5) - hash) + cleanText.charCodeAt(i);
+    for (let i = 0; i < fingerprint.length; i++) {
+      hash = ((hash << 5) - hash) + fingerprint.charCodeAt(i);
       hash |= 0;
     }
-    const sample = cleanText.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '');
+    const sample = cleanText.slice(0, 16).replace(/[^a-zA-Z0-9]/g, '') || (imgSignatures ? 'img' : 'msg');
     return `${prefix}-${role}-${Math.abs(hash).toString(36)}${sample ? '-' + sample : ''}`;
   },
 
@@ -87,9 +97,9 @@ window.ChatPdfUtils = {
       }
     });
 
-    // 2. Remove interactive/action UI controls
+    // 2. Remove interactive/action UI controls (preserve image thumbnails)
     const elementsToRemove = clone.querySelectorAll(
-      '.chat-pdf-select-container, [aria-label*="Copy" i], [aria-label*="Thumb" i], [aria-label*="Edit" i], [aria-label*="Read aloud" i], [data-testid*="feedback" i], [data-testid*="copy" i], .gizmo-shadow'
+      '.chat-pdf-select-container, [aria-label*="Copy" i], [aria-label*="Thumbs up" i], [aria-label*="Thumbs down" i], [aria-label*="Thumb up" i], [aria-label*="Thumb down" i], [aria-label*="Edit" i], [aria-label*="Read aloud" i], [data-testid*="feedback" i], [data-testid*="copy" i], .gizmo-shadow'
     );
     elementsToRemove.forEach(el => el.remove());
 

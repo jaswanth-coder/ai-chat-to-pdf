@@ -36,7 +36,10 @@ class ClaudeAdapter extends BaseAdapter {
   extractMessageData(element) {
     const isUser = element.classList.contains('font-user-message') ||
                     element.querySelector('.font-user-message') !== null ||
-                    element.closest('[data-testid*="user-message"]') !== null;
+                    element.closest('[data-testid*="user-message"]') !== null ||
+                    element.querySelector('[data-testid*="user-message"]') !== null ||
+                    element.querySelector('[class*="UserMessage"]') !== null ||
+                    (element.querySelector('img[alt*="Uploaded" i], [class*="attachment" i]') !== null && !element.querySelector('.font-claude-message'));
 
     const role = isUser ? 'user' : 'assistant';
     const authorName = isUser ? 'You' : 'Claude';
@@ -55,6 +58,14 @@ class ClaudeAdapter extends BaseAdapter {
     let text = '';
     if (contentElement) {
       text = (contentElement.innerText || contentElement.textContent || '').replace(/\s+/g, ' ').trim();
+      const imgs = (contentElement || element).querySelectorAll('img');
+      if (imgs.length > 0) {
+        const imgDetails = Array.from(imgs).map(img => img.alt || img.title || '').filter(Boolean);
+        const imgLabel = imgDetails.length > 0 
+          ? `🖼️ [Image: ${imgDetails.join(', ').slice(0, 50)}]` 
+          : `🖼️ [${imgs.length > 1 ? imgs.length + ' Images' : 'Attached Image'}]`;
+        text = text ? `${imgLabel} ${text}` : imgLabel;
+      }
     }
 
     let id = element.dataset.chatPdfId;

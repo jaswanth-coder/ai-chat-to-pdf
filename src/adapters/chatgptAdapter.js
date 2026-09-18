@@ -59,10 +59,12 @@ class ChatGPTAdapter extends BaseAdapter {
     // Detect role (user vs assistant)
     let role = 'assistant';
     const roleAttr = element.getAttribute('data-message-author-role');
-    const userChild = element.querySelector('[data-message-author-role="user"]');
+    const userChild = element.querySelector('[data-message-author-role="user"], [class*="user-message"], [data-testid*="user"], [class*="human"]');
     const assistantChild = element.querySelector('[data-message-author-role="assistant"]');
+    const hasUserImage = (element.querySelector('img, [class*="attachment" i], button[aria-label*="image" i]') !== null) && 
+                         !element.querySelector('.markdown, .prose, [data-message-author-role="assistant"]');
 
-    if (roleAttr === 'user' || userChild) {
+    if (roleAttr === 'user' || userChild || hasUserImage) {
       role = 'user';
     } else if (roleAttr === 'assistant' || assistantChild) {
       role = 'assistant';
@@ -92,10 +94,18 @@ class ChatGPTAdapter extends BaseAdapter {
       contentHtml = cleanNode ? cleanNode.innerHTML : '';
     }
 
-    // Extract plain text snippet for index display
+    // Extract plain text snippet for index display (including image labels)
     let text = '';
     if (contentElement) {
       text = (contentElement.innerText || contentElement.textContent || '').replace(/\s+/g, ' ').trim();
+      const imgs = (contentElement || element).querySelectorAll('img');
+      if (imgs.length > 0) {
+        const imgDetails = Array.from(imgs).map(img => img.alt || img.title || '').filter(Boolean);
+        const imgLabel = imgDetails.length > 0 
+          ? `🖼️ [Image: ${imgDetails.join(', ').slice(0, 50)}]` 
+          : `🖼️ [${imgs.length > 1 ? imgs.length + ' Images' : 'Attached Image'}]`;
+        text = text ? `${imgLabel} ${text}` : imgLabel;
+      }
     }
 
     // Stable ID to survive virtual scroll DOM recycling

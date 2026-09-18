@@ -40,11 +40,8 @@
 
     pdfRenderer = new window.ChatPdfRenderer();
 
-    // Inject Left Sidebar & Toggle Tab
+    // Inject Right Sidebar & Toggle Tab
     createSidebar();
-
-    // Inject Floating UI
-    createFloatingBar();
 
     // Initial message harvest & checkbox attachment
     harvestAndAttach();
@@ -347,7 +344,7 @@
         </div>
         <div class="chat-pdf-sidebar-header-actions">
           <button class="chat-pdf-icon-btn" id="chat-pdf-sidebar-btn-rescan" title="Re-scan full conversation">🔄</button>
-          <button class="chat-pdf-icon-btn" id="chat-pdf-sidebar-btn-collapse" title="Collapse Sidebar">◀</button>
+          <button class="chat-pdf-icon-btn" id="chat-pdf-sidebar-btn-collapse" title="Collapse Sidebar">▶</button>
         </div>
       </div>
 
@@ -481,58 +478,10 @@
   }
 
   /**
-   * Create Floating Bar Widget
+   * Floating bar widget removed as requested to keep UI clean and unobtrusive.
    */
   function createFloatingBar() {
-    if (document.getElementById('chat-pdf-floating-bar')) return;
-
-    floatingBarEl = document.createElement('div');
-    floatingBarEl.id = 'chat-pdf-floating-bar';
-
-    floatingBarEl.innerHTML = `
-      <div class="chat-pdf-bar-content" style="display: flex; align-items: center; gap: 8px;">
-        <div class="chat-pdf-bar-title">
-          <span class="chat-pdf-icon">📄</span>
-          <span>PDF Export</span>
-          <span class="chat-pdf-badge" id="chat-pdf-counter">0</span>
-        </div>
-        <div class="chat-pdf-btn-group">
-          <button class="chat-pdf-btn" id="chat-pdf-btn-sidebar" title="Toggle Prompt Index Sidebar">
-            <span>📑</span> Prompts
-          </button>
-          <button class="chat-pdf-btn" id="chat-pdf-btn-scan" title="Auto-scroll to harvest and index all prompts">
-            <span>🔍</span> Scan All
-          </button>
-          <button class="chat-pdf-btn" id="chat-pdf-btn-inverse" title="Invert selection">⇄ Invert</button>
-          <button class="chat-pdf-btn chat-pdf-btn-primary" id="chat-pdf-btn-export" title="Download selected as PDF">
-            <span>📥</span> Download
-          </button>
-        </div>
-      </div>
-      <button class="chat-pdf-bar-collapse" id="chat-pdf-btn-toggle" title="Minimize / Expand">✕</button>
-    `;
-
-    document.body.appendChild(floatingBarEl);
-
-    // Event handlers
-    const btnSidebar = floatingBarEl.querySelector('#chat-pdf-btn-sidebar');
-    const btnScan = floatingBarEl.querySelector('#chat-pdf-btn-scan');
-    const btnInverse = floatingBarEl.querySelector('#chat-pdf-btn-inverse');
-    const btnExport = floatingBarEl.querySelector('#chat-pdf-btn-export');
-    const btnToggle = floatingBarEl.querySelector('#chat-pdf-btn-toggle');
-
-    btnSidebar.addEventListener('click', () => setSidebarCollapsed(!isSidebarCollapsed));
-    btnScan.addEventListener('click', () => autoScanEntireChat({ isAuto: false }));
-    btnInverse.addEventListener('click', invertSelection);
-    btnExport.addEventListener('click', handleExport);
-
-    let isMinimized = false;
-    btnToggle.addEventListener('click', () => {
-      isMinimized = !isMinimized;
-      floatingBarEl.classList.toggle('chat-pdf-minimized', isMinimized);
-      btnToggle.textContent = isMinimized ? '📄' : '✕';
-      btnToggle.title = isMinimized ? 'Expand PDF Toolbar' : 'Minimize';
-    });
+    // Intentionally left blank - all controls are unified inside the right sidebar
   }
 
   /**
@@ -613,8 +562,8 @@
     let html = '';
     filteredTurns.forEach((turn) => {
       const status = getTurnSelectionStatus(turn);
-      const isSelected = status === 'full' || status === 'partial';
-      const promptFull = turn.prompt.text || 'Untitled Prompt';
+      const hasImage = turn.prompt.contentHtml && turn.prompt.contentHtml.includes('<img');
+      const promptFull = turn.prompt.text || (hasImage ? '🖼️ [Attached Image]' : 'Untitled Prompt');
       const promptSnippet = promptFull.length > 85 ? promptFull.slice(0, 85) + '...' : promptFull;
 
       // Extract response preview
@@ -939,17 +888,21 @@
       // 1. Initial harvest pass
       harvestAndAttach();
 
+      // Dynamic large step size: scans ~1.5 screenfuls per step
+      const stepSize = Math.max(1400, Math.floor((scrollContainer.clientHeight || 800) * 1.5));
+      const stepDelay = 55; // Fast, responsive 55ms delay per step
+
       // 2. Scroll upward to mount and harvest older messages up to top
       let lastTop = -1;
       let attempts = 0;
-      const maxAttempts = 150;
+      const maxUpwardAttempts = 40;
 
-      while (scrollContainer.scrollTop > 10 && attempts < maxAttempts) {
+      while (scrollContainer.scrollTop > 5 && attempts < maxUpwardAttempts) {
         if (stopScanRequested) break;
         if (scrollContainer.scrollTop === lastTop) break;
         lastTop = scrollContainer.scrollTop;
-        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - 850);
-        await new Promise(r => setTimeout(r, 110));
+        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - stepSize);
+        await new Promise(r => setTimeout(r, stepDelay));
         harvestAndAttach();
 
         if (bannerText) {
@@ -961,15 +914,20 @@
       // 3. Scroll downward to mount and harvest all responses down to the bottom
       let lastHeight = -1;
       attempts = 0;
-      while (attempts < maxAttempts) {
+      const maxDownwardAttempts = 40;
+      while (attempts < maxDownwardAttempts) {
         if (stopScanRequested) break;
         const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-        if (scrollContainer.scrollTop >= maxScroll - 30 && scrollContainer.scrollHeight === lastHeight) {
+        if (scrollContainer.scrollTop >= maxScroll - 15) {
           break;
         }
+        if (scrollContainer.scrollTop === lastTop && scrollContainer.scrollHeight === lastHeight) {
+          break;
+        }
+        lastTop = scrollContainer.scrollTop;
         lastHeight = scrollContainer.scrollHeight;
-        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + 850);
-        await new Promise(r => setTimeout(r, 110));
+        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + stepSize);
+        await new Promise(r => setTimeout(r, stepDelay));
         harvestAndAttach();
 
         if (bannerText) {
