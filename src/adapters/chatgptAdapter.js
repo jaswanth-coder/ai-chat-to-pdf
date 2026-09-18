@@ -27,19 +27,13 @@ class ChatGPTAdapter extends BaseAdapter {
    * Dual-pass turn detector: guarantees finding both user prompts AND assistant responses
    */
   getMessageElements() {
-    // 1. Primary: conversation turn containers (OpenAI standard for all turns)
-    const turns = Array.from(document.querySelectorAll('div[data-testid^="conversation-turn"]'));
-    if (turns.length > 0) {
-      return turns.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
-    }
-
-    // 2. Secondary: collect all role containers, articles, and user message wrappers
-    const roleNodes = Array.from(document.querySelectorAll('[data-message-author-role]'));
-    const articles = Array.from(document.querySelectorAll('article'));
-    const userPrompts = Array.from(document.querySelectorAll('[class*="user-message"], [data-testid*="user"]'));
+    // Collect all conversation turns, articles, and role nodes
+    const nodes = Array.from(document.querySelectorAll(
+      '[data-testid^="conversation-turn"], article, [data-message-author-role], [class*="user-message"]'
+    ));
 
     const candidateSet = new Set();
-    [...turns, ...roleNodes, ...articles, ...userPrompts].forEach(el => {
+    nodes.forEach(el => {
       const parentTurn = el.closest('[data-testid^="conversation-turn"]') || el.closest('article') || el;
       candidateSet.add(parentTurn);
     });

@@ -829,8 +829,9 @@
 
     // Sidebar export button count
     const exportCount = document.getElementById('chat-pdf-sidebar-export-count');
+    const displayCount = selectedCount > 0 ? selectedCount : totalMessages;
     if (exportCount) {
-      exportCount.textContent = selectedCount;
+      exportCount.textContent = displayCount;
     }
 
     // Floating tab count
@@ -839,10 +840,10 @@
       tabCount.textContent = `${selectedPrompts}/${totalPrompts}`;
     }
 
-    // Export button enabled/disabled
+    // Export button enabled/disabled: always enabled when messages exist
     const exportBtn = document.getElementById('chat-pdf-sidebar-export-btn');
     if (exportBtn) {
-      exportBtn.disabled = selectedCount === 0;
+      exportBtn.disabled = totalMessages === 0;
     }
   }
 
@@ -895,14 +896,14 @@
       // 2. Scroll upward to mount and harvest older messages up to top
       let lastTop = -1;
       let attempts = 0;
-      const maxUpwardAttempts = 40;
+      const maxUpwardAttempts = 60;
 
       while (scrollContainer.scrollTop > 5 && attempts < maxUpwardAttempts) {
         if (stopScanRequested) break;
         if (scrollContainer.scrollTop === lastTop) break;
         lastTop = scrollContainer.scrollTop;
-        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - stepSize);
-        await new Promise(r => setTimeout(r, stepDelay));
+        scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - 950);
+        await new Promise(r => setTimeout(r, 85));
         harvestAndAttach();
 
         if (bannerText) {
@@ -911,23 +912,34 @@
         attempts++;
       }
 
-      // 3. Scroll downward to mount and harvest all responses down to the bottom
-      let lastHeight = -1;
+      // 3. Scroll downward from top to bottom
+      let prevScrollTop = -1;
+      let prevHeight = -1;
+      let noProgressCount = 0;
       attempts = 0;
-      const maxDownwardAttempts = 40;
+      const maxDownwardAttempts = 100;
+
       while (attempts < maxDownwardAttempts) {
         if (stopScanRequested) break;
-        const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-        if (scrollContainer.scrollTop >= maxScroll - 15) {
-          break;
+
+        const maxScroll = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+        const atBottom = scrollContainer.scrollTop >= maxScroll - 20;
+
+        if (atBottom && scrollContainer.scrollHeight === prevHeight) {
+          noProgressCount++;
+          if (noProgressCount >= 2) break; // Reached end of thread
+        } else if (scrollContainer.scrollTop === prevScrollTop && scrollContainer.scrollHeight === prevHeight) {
+          noProgressCount++;
+          if (noProgressCount >= 2) break;
+        } else {
+          noProgressCount = 0;
         }
-        if (scrollContainer.scrollTop === lastTop && scrollContainer.scrollHeight === lastHeight) {
-          break;
-        }
-        lastTop = scrollContainer.scrollTop;
-        lastHeight = scrollContainer.scrollHeight;
-        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + stepSize);
-        await new Promise(r => setTimeout(r, stepDelay));
+
+        prevScrollTop = scrollContainer.scrollTop;
+        prevHeight = scrollContainer.scrollHeight;
+
+        scrollContainer.scrollTop = Math.min(scrollContainer.scrollHeight, scrollContainer.scrollTop + 950);
+        await new Promise(r => setTimeout(r, 85));
         harvestAndAttach();
 
         if (bannerText) {
@@ -939,10 +951,8 @@
       // Final harvest pass
       harvestAndAttach();
 
-      // Select all by default after initial scan if nothing selected yet
-      if (selectedMessageIds.size === 0) {
-        selectAllMessages(true);
-      }
+      // Select all by default after scan
+      selectAllMessages(true);
 
       // Restore user's original scroll position smoothly
       scrollContainer.scrollTop = originalScrollTop;
@@ -974,74 +984,91 @@
   async function handleExport() {
     if (!activeAdapter) return;
 
-    harvestAndAttach();
+    const exportBtn = document.getElementById('chat-pdf-sidebar-export-btn');
+    const originalText = exportBtn ? exportBtn.innerHTML : '';
 
-    // Gather all messages in strict chronological order according to global sequence tracker
-    const allOrderedMessages = orderedMessageIds
-      .map(id => harvestedMessagesMap.get(id))
-      .filter(Boolean);
+    try {
+      if (exportBtn) {
+        exportBtn.innerHTML = '<span>⏳</span> Preparing PDF...';
+        exportBtn.disabled = true;
+      }
 
-    // Fallback: append any harvested messages not yet tracked in orderedMessageIds
-    if (allOrderedMessages.length < harvestedMessagesMap.size) {
-      harvestedMessagesMap.forEach((msg, id) => {
-        if (!orderedMessageIds.includes(id)) {
-          allOrderedMessages.push(msg);
-        }
+      harvestAndAttach();
+
+      // Gather all messages in strict chronological order according to global sequence tracker
+      const allOrderedMessages = orderedMessageIds
+        .map(id => harvestedMessagesMap.get(id))
+        .filter(Boolean);
+
+      // Fallback: append any harvested messages not yet tracked in orderedMessageIds
+      if (allOrderedMessages.length < harvestedMessagesMap.size) {
+        harvestedMessagesMap.forEach((msg, id) => {
+          if (!orderedMessageIds.includes(id)) {
+            allOrderedMessages.push(msg);
+          }
+        });
+      }
+
+      let exportMessages = [];
+
+      if (isAllSelected || selectedMessageIds.size === 0) {
+        exportMessages = [...allOrderedMessages];
+      } else {
+        exportMessages = allOrderedMessages.filter(msg => selectedMessageIds.has(msg.id));
+      }
+
+      if (exportMessages.length === 0) {
+        exportMessages = [...allOrderedMessages];
+      }
+
+      if (exportMessages.length === 0) {
+        alert('No messages found. Try scrolling through the chat or clicking "🔄 Re-scan" first.');
+        return;
+      }
+
+      // Always sort strictly by turnIndex so chronological order is 100% preserved
+      exportMessages.sort((a, b) => {
+        const idxA = (typeof a.turnIndex === 'number') ? a.turnIndex : 0;
+        const idxB = (typeof b.turnIndex === 'number') ? b.turnIndex : 0;
+        return idxA - idxB;
       });
-    }
 
-    let exportMessages = [];
+      if (exportMessages.length > MAX_EXPORT_LIMIT) {
+        const proceed = confirm(
+          `You have ${exportMessages.length} messages selected (limit is ${MAX_EXPORT_LIMIT}). For optimal browser performance and PDF rendering, the first ${MAX_EXPORT_LIMIT} messages will be exported in chronological order. Proceed?`
+        );
+        if (!proceed) return;
+        exportMessages = exportMessages.slice(0, MAX_EXPORT_LIMIT);
+      }
 
-    if (isAllSelected || selectedMessageIds.size === 0) {
-      exportMessages = [...allOrderedMessages];
-    } else {
-      exportMessages = allOrderedMessages.filter(msg => selectedMessageIds.has(msg.id));
-    }
+      const title = activeAdapter.getChatTitle();
 
-    if (exportMessages.length === 0) {
-      const confirmAll = confirm(`Export all ${harvestedMessagesMap.size} messages?`);
-      if (!confirmAll) return;
-      exportMessages = [...allOrderedMessages];
-    }
+      let settings = { theme: 'light', includeTimestamps: true, includeHeader: true, fontSize: 'medium' };
+      if (chrome && chrome.storage && chrome.storage.sync) {
+        try {
+          const stored = await chrome.storage.sync.get(['theme', 'includeTimestamps', 'includeHeader', 'fontSize']);
+          if (stored) settings = { ...settings, ...stored };
+        } catch (e) {
+          console.warn('Could not read storage settings, using defaults.', e);
+        }
+      }
 
-    if (exportMessages.length === 0) {
-      alert('No messages found. Try scrolling through the chat or clicking "Scan All" first.');
-      return;
-    }
-
-    // Always sort strictly by turnIndex so chronological order is 100% preserved
-    exportMessages.sort((a, b) => {
-      const idxA = (typeof a.turnIndex === 'number') ? a.turnIndex : 0;
-      const idxB = (typeof b.turnIndex === 'number') ? b.turnIndex : 0;
-      return idxA - idxB;
-    });
-
-    if (exportMessages.length > MAX_EXPORT_LIMIT) {
-      const proceed = confirm(
-        `You have ${exportMessages.length} messages selected (limit is ${MAX_EXPORT_LIMIT}). For optimal browser performance and PDF rendering, the first ${MAX_EXPORT_LIMIT} messages will be exported in chronological order. Proceed?`
-      );
-      if (!proceed) return;
-      exportMessages = exportMessages.slice(0, MAX_EXPORT_LIMIT);
-    }
-
-    const title = activeAdapter.getChatTitle();
-
-    let settings = { theme: 'light', includeTimestamps: true, includeHeader: true, fontSize: 'medium' };
-    if (chrome && chrome.storage && chrome.storage.sync) {
-      try {
-        const stored = await chrome.storage.sync.get(['theme', 'includeTimestamps', 'includeHeader', 'fontSize']);
-        if (stored) settings = { ...settings, ...stored };
-      } catch (e) {
-        console.warn('Could not read storage settings, using defaults.', e);
+      await pdfRenderer.exportToPdf({
+        title,
+        providerName: activeAdapter.name,
+        messages: exportMessages,
+        settings
+      });
+    } catch (err) {
+      console.error('PDF Export Error:', err);
+      alert('PDF export failed: ' + (err.message || err));
+    } finally {
+      if (exportBtn) {
+        exportBtn.innerHTML = originalText;
+        exportBtn.disabled = false;
+        updateCounters();
       }
     }
-
-    await pdfRenderer.exportToPdf({
-      title,
-      providerName: activeAdapter.name,
-      messages: exportMessages,
-      settings
-    });
   }
 
   /**

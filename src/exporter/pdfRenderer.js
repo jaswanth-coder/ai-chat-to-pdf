@@ -46,9 +46,11 @@ class ChatPdfRenderer {
     this.iframe.style.position = 'fixed';
     this.iframe.style.right = '0';
     this.iframe.style.bottom = '0';
-    this.iframe.style.width = '0';
-    this.iframe.style.height = '0';
+    this.iframe.style.width = '1px';
+    this.iframe.style.height = '1px';
     this.iframe.style.border = '0';
+    this.iframe.style.opacity = '0.01';
+    this.iframe.style.pointerEvents = 'none';
     this.iframe.id = 'chat-pdf-print-frame';
     document.body.appendChild(this.iframe);
 
