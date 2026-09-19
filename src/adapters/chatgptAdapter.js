@@ -68,13 +68,10 @@ class ChatGPTAdapter extends BaseAdapter {
     const isUser = role === 'user';
     const authorName = isUser ? 'You' : 'ChatGPT';
 
-    // Content element: pick the exact message container so text, code, images, and math are all included
+    // Content element:
+    // For user prompts, keep element so any attached images/screenshots are captured with text
     let contentElement = element;
-    if (isUser) {
-      contentElement = element.querySelector('[data-message-author-role="user"]') ||
-                       element.querySelector('[class*="user-message"]') ||
-                       element;
-    } else {
+    if (!isUser) {
       contentElement = element.querySelector('[data-message-author-role="assistant"]') ||
                        element.querySelector('.markdown') ||
                        element.querySelector('.prose') ||

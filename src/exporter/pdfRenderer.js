@@ -63,11 +63,16 @@ class ChatPdfRenderer {
       const roleBadgeClass = isUser ? 'badge-user' : 'badge-assistant';
       const avatarIcon = isUser ? '👤' : (providerName === 'Claude' ? '🟣' : (providerName === 'Gemini' ? '✨' : '🤖'));
       
-      // Use harvested HTML, live element clone, or formatted text fallback
-      let contentHtml = msg.contentHtml;
-      if (!contentHtml && msg.contentElement) {
+      // Prioritize live DOM element clone so active images, code, and KaTeX are captured
+      let contentHtml = '';
+      if (msg.contentElement && document.contains(msg.contentElement)) {
         const cleanContent = window.ChatPdfUtils.cleanCloneForPrint(msg.contentElement);
-        contentHtml = cleanContent ? cleanContent.innerHTML : '';
+        if (cleanContent && cleanContent.innerHTML.trim()) {
+          contentHtml = cleanContent.innerHTML;
+        }
+      }
+      if (!contentHtml && msg.contentHtml) {
+        contentHtml = msg.contentHtml;
       }
       if (!contentHtml && msg.text && window.ChatPdfUtils && window.ChatPdfUtils.formatTextToHtml) {
         contentHtml = window.ChatPdfUtils.formatTextToHtml(msg.text);

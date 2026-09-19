@@ -81,29 +81,47 @@ window.ChatPdfUtils = {
   },
 
   /**
+   * Compile a LaTeX string using bundled KaTeX into beautiful math HTML
+   */
+  compileLatex(tex, isDisplay = false) {
+    if (!tex) return '';
+    const cleanTex = tex.trim();
+    if (typeof window !== 'undefined' && window.katex && typeof window.katex.renderToString === 'function') {
+      try {
+        return window.katex.renderToString(cleanTex, {
+          displayMode: isDisplay,
+          throwOnError: false
+        });
+      } catch (e) {
+        // Fallback
+      }
+    }
+    return `<span class="katex"><span class="katex-html">${this.escapeHtml(cleanTex)}</span></span>`;
+  },
+
+  /**
    * Deep clone a DOM node, preserving images/screenshots and equations cleanly
    */
   cleanCloneForPrint(element) {
     if (!element) return null;
     const clone = element.cloneNode(true);
 
-    // 1. Preserve images/screenshots inside buttons (e.g. ChatGPT thumbnail buttons)
+    // 1. Unwrap buttons containing images without duplicating image elements
     const buttons = clone.querySelectorAll('button');
     buttons.forEach(btn => {
       const imgs = btn.querySelectorAll('img');
       if (imgs.length > 0) {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'chat-pdf-attachment-image';
-        imgs.forEach(img => {
-          wrapper.appendChild(img.cloneNode(true));
-        });
-        btn.parentNode.replaceChild(wrapper, btn);
+        const fragment = document.createDocumentFragment();
+        while (btn.firstChild) {
+          fragment.appendChild(btn.firstChild);
+        }
+        btn.parentNode.replaceChild(fragment, btn);
       } else {
         btn.remove();
       }
     });
 
-    // 2. Remove interactive/action UI controls (preserve image thumbnails)
+    // 2. Remove interactive/action UI controls (copy, feedback, audio, avatars)
     const elementsToRemove = clone.querySelectorAll(
       '.chat-pdf-select-container, [aria-label*="Copy" i], [aria-label*="Thumbs up" i], [aria-label*="Thumbs down" i], [aria-label*="Thumb up" i], [aria-label*="Thumb down" i], [aria-label*="Edit" i], [aria-label*="Read aloud" i], [data-testid*="feedback" i], [data-testid*="copy" i], .gizmo-shadow'
     );
@@ -116,28 +134,85 @@ window.ChatPdfUtils = {
       el.removeAttribute('aria-hidden');
     });
 
-    // 4. Ensure all images and screenshots have eager loading and high quality without canvas corruption
-    const originalImgs = Array.from(element.querySelectorAll('img'));
+    // Auto-compile any unrendered LaTeX formulas in text nodes
+    if (typeof window !== 'undefined' && window.katex && typeof window.katex.renderToString === 'function') {
+      try {
+        const walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT, null, false);
+        const textNodesToCompile = [];
+        let textNode;
+        while ((textNode = walker.nextNode())) {
+          if (textNode.parentElement && textNode.parentElement.closest('pre, code, .katex, .chat-pdf-code-container')) {
+            continue;
+          }
+          const val = textNode.nodeValue;
+          if (val && (/(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([^\)\n]+?\\\)|\$[^\$\n]{1,80}\$)/.test(val))) {
+            textNodesToCompile.push(textNode);
+          }
+        }
+
+        textNodesToCompile.forEach(node => {
+          let text = node.nodeValue;
+          // Display math
+          text = text.replace(/(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])/g, (m, m1, m2) => {
+            const tex = (m1 || m2 || '').trim();
+            try {
+              return `<div class="katex-display">${window.katex.renderToString(tex, { displayMode: true, throwOnError: false })}</div>`;
+            } catch (e) { return m; }
+          });
+          // Inline math
+          text = text.replace(/(?:\\\(([^\)\n]+?)\\\)|\$([^\$\n]{1,80}?)\$)/g, (m, m1, m2) => {
+            const tex = (m1 || m2 || '').trim();
+            try {
+              return window.katex.renderToString(tex, { displayMode: false, throwOnError: false });
+            } catch (e) { return m; }
+          });
+
+          const span = document.createElement('span');
+          span.innerHTML = text;
+          if (node.parentNode) {
+            node.parentNode.replaceChild(span, node);
+          }
+        });
+      } catch (err) {
+        // Continue cleanly
+      }
+    }
+
+    // 4. Deduplicate images (eliminate 3x DALL-E repetition) and preserve user prompt images
+    const seenImageKeys = new Set();
     const clonedImgs = Array.from(clone.querySelectorAll('img'));
 
-    clonedImgs.forEach((img, idx) => {
-      // Find matching original image by src or currentSrc
-      const orig = originalImgs.find(o => (o.src && o.src === img.src) || (o.currentSrc && o.currentSrc === img.src)) || originalImgs[idx];
-
+    clonedImgs.forEach((img) => {
       // Remove avatars / decorative icons so they don't pollute content
       const isAvatarOrIcon = img.closest('[class*="avatar" i], [class*="gizmo" i]') ||
                              /avatar|profile|logo/i.test(img.alt || img.className || '') ||
-                             (orig && orig.naturalWidth > 0 && orig.naturalWidth <= 36 && orig.naturalHeight <= 36) ||
-                             (img.width > 0 && img.width <= 36 && img.height <= 36);
+                             (img.width > 0 && img.width <= 36 && img.height > 0 && img.height <= 36);
 
       if (isAvatarOrIcon) {
         img.remove();
         return;
       }
 
-      if (orig && orig.currentSrc && !img.src) {
-        img.src = orig.currentSrc;
+      const src = img.src || img.getAttribute('src') || '';
+      if (!src) {
+        img.remove();
+        return;
       }
+
+      // Deduplicate images by core URL path so thumbnails / duplicate DALL-E views don't appear multiple times
+      let coreKey = src;
+      try {
+        const u = new URL(src, window.location.href);
+        coreKey = u.origin + u.pathname;
+      } catch (e) {
+        coreKey = src.split('?')[0];
+      }
+
+      if (seenImageKeys.has(coreKey)) {
+        img.remove(); // Remove duplicate image!
+        return;
+      }
+      seenImageKeys.add(coreKey);
 
       img.setAttribute('loading', 'eager');
       img.removeAttribute('srcset');
@@ -289,7 +364,12 @@ window.ChatPdfUtils = {
       if (!str) return '';
       return str
         // Inline math: $math$ or \(math\)
-        .replace(/(?:\$([^\$\n]+)\$|\\\(([^\)\n]+)\\\))/g, '<span class="katex"><span class="katex-html">$1$2</span></span>')
+        .replace(/(?:\\\$|(?:\$([^\$\n]+)\$|\\\(([^\)\n]+)\\\)))/g, (m, m1, m2) => {
+          if (m === '\\$') return '$';
+          const mathContent = (m1 || m2 || '').trim();
+          if (!mathContent) return m;
+          return this.compileLatex(mathContent, false);
+        })
         // Inline code: `code`
         .replace(/`([^`]+)`/g, '<code class="chat-pdf-inline-code">$1</code>')
         // Images: ![alt](url)
@@ -331,11 +411,11 @@ window.ChatPdfUtils = {
     text = text.replace(/(?:\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\])/g, (match, m1, m2) => {
       const placeholder = `__MATH_BLOCK_${mathBlocks.length}__`;
       const mathContent = (m1 || m2 || '').trim();
-      const escapedMath = this.escapeHtml(mathContent);
+      const compiled = this.compileLatex(mathContent, true);
       mathBlocks.push(`
         <div class="chat-pdf-math-container">
           <div class="chat-pdf-math-label"><span>📐</span> Mathematical Formula</div>
-          <div class="katex-display"><span class="katex"><span class="katex-html">${escapedMath}</span></span></div>
+          <div class="katex-display">${compiled}</div>
         </div>
       `);
       return placeholder;
